@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.permissions import require_permission
 from app.db.session import get_db
 from app.models.execution import ExecutionPlan
+from app.models.user import User
 from app.schemas.execution import ExecutionPlanOut, ExecutionPlanStepOut
 from app.services import execution_service
 from app.services.unit_conversion import format_compound
@@ -17,7 +18,7 @@ def _plan_to_out(plan: ExecutionPlan) -> ExecutionPlanOut:
     steps_out = []
     for s in sorted(plan.steps, key=lambda s: s.order_index):
         quantity_display = None
-        if s.step_type == "ingredient" and s.quantity_canonical_computed is not None:
+        if s.step_type in {"ingredient", "ingredient_event"} and s.quantity_canonical_computed is not None:
             quantity_display = format_compound(s.quantity_canonical_computed, s.measure_type_snapshot)
         steps_out.append(
             ExecutionPlanStepOut(
@@ -48,9 +49,12 @@ def _plan_to_out(plan: ExecutionPlan) -> ExecutionPlanOut:
 @router.get(
     "/order-lines/{order_line_id}/execution-plan",
     response_model=ExecutionPlanOut,
-    dependencies=[Depends(require_permission("order.execute"))],
 )
-async def get_execution_plan(order_line_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_execution_plan(
+    order_line_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("order.execute")),
+):
     plan = await execution_service.get_or_create_execution_plan(db, order_line_id)
     return _plan_to_out(plan)
 
@@ -58,8 +62,24 @@ async def get_execution_plan(order_line_id: uuid.UUID, db: AsyncSession = Depend
 @router.post(
     "/execution-plans/{plan_id}/advance",
     response_model=ExecutionPlanOut,
-    dependencies=[Depends(require_permission("order.execute"))],
 )
-async def advance(plan_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    plan = await execution_service.advance_step(db, plan_id)
+async def advance(
+    plan_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("order.execute")),
+):
+    plan = await execution_service.advance_step(db, plan_id, user.id)
+    return _plan_to_out(plan)
+
+
+@router.post(
+    "/execution-plans/{plan_id}/rewind",
+    response_model=ExecutionPlanOut,
+)
+async def rewind(
+    plan_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("order.execute")),
+):
+    plan = await execution_service.rewind_step(db, plan_id, user.id)
     return _plan_to_out(plan)

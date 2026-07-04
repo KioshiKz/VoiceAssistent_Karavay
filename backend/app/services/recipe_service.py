@@ -10,7 +10,7 @@ from app.models.ingredient import Ingredient
 from app.models.product import Product
 from app.models.recipe_step import RecipeStep
 from app.schemas.recipe_step import RecipeStepCreate
-from app.services.unit_conversion import format_compound
+from app.services.unit_conversion import format_compound, quantize_quantity
 
 
 async def get_product_or_404(db: AsyncSession, product_id: uuid.UUID) -> Product:
@@ -32,7 +32,7 @@ async def load_steps(db: AsyncSession, product_id: uuid.UUID) -> list[RecipeStep
 
 def step_to_dict(step: RecipeStep) -> dict:
     quantity_display = None
-    if step.step_type == "ingredient" and step.ingredient is not None and step.quantity_canonical is not None:
+    if step.step_type in {"ingredient", "ingredient_event"} and step.ingredient is not None and step.quantity_canonical is not None:
         quantity_display = format_compound(step.quantity_canonical, step.ingredient.measure_type)
     return {
         "id": step.id,
@@ -48,11 +48,11 @@ def step_to_dict(step: RecipeStep) -> dict:
 
 
 async def create_step(db: AsyncSession, product_id: uuid.UUID, payload: RecipeStepCreate) -> RecipeStep:
-    if payload.step_type == "ingredient":
+    if payload.step_type in {"ingredient", "ingredient_event"}:
         ingredient = await db.get(Ingredient, payload.ingredient_id)
         if ingredient is None:
             raise HTTPException(404, detail="ingredient_not_found")
-    else:
+    if payload.step_type in {"event", "ingredient_event"}:
         event_template = await db.get(EventTemplate, payload.event_template_id)
         if event_template is None:
             raise HTTPException(404, detail="event_template_not_found")
@@ -62,7 +62,7 @@ async def create_step(db: AsyncSession, product_id: uuid.UUID, payload: RecipeSt
         order_index=payload.order_index,
         step_type=payload.step_type,
         ingredient_id=payload.ingredient_id,
-        quantity_canonical=payload.quantity_canonical,
+        quantity_canonical=quantize_quantity(payload.quantity_canonical) if payload.quantity_canonical is not None else None,
         event_template_id=payload.event_template_id,
         event_params=payload.event_params,
     )
@@ -74,6 +74,8 @@ async def create_step(db: AsyncSession, product_id: uuid.UUID, payload: RecipeSt
 
 async def update_step(db: AsyncSession, step: RecipeStep, payload) -> RecipeStep:
     for key, value in payload.model_dump(exclude_unset=True).items():
+        if key == "quantity_canonical" and value is not None:
+            value = quantize_quantity(value)
         setattr(step, key, value)
     await db.commit()
     await db.refresh(step, attribute_names=["ingredient", "event_template"])

@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from decimal import Decimal
+
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,7 +16,9 @@ class RecipeStep(Base):
         CheckConstraint(
             "(step_type = 'ingredient' AND ingredient_id IS NOT NULL AND event_template_id IS NULL "
             "AND quantity_canonical IS NOT NULL) OR "
-            "(step_type = 'event' AND event_template_id IS NOT NULL AND ingredient_id IS NULL)",
+            "(step_type = 'event' AND event_template_id IS NOT NULL AND ingredient_id IS NULL) OR "
+            "(step_type = 'ingredient_event' AND ingredient_id IS NOT NULL AND event_template_id IS NOT NULL "
+            "AND quantity_canonical IS NOT NULL)",
             name="step_shape",
         ),
         UniqueConstraint("product_id", "order_index", name="uq_recipe_step_order"),
@@ -30,7 +34,7 @@ class RecipeStep(Base):
     ingredient_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("ingredients.id", ondelete="RESTRICT")
     )
-    quantity_canonical: Mapped[int | None] = mapped_column(Integer)
+    quantity_canonical: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
 
     event_template_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("event_templates.id", ondelete="RESTRICT")

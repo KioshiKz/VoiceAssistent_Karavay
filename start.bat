@@ -3,16 +3,17 @@ setlocal
 
 set "ROOT=%~dp0"
 set "PGBIN=C:\Program Files\PostgreSQL\18\bin"
+set "PGPORT=55433"
 set "PGDATA=%ROOT%.devdata\pgdata"
 set "SYS=%SystemRoot%\System32"
 
 echo === Karavay: starting ===
 
-echo Checking Postgres (port 5433)...
+echo Checking Postgres (port %PGPORT%)...
 "%PGBIN%\pg_ctl.exe" -D "%PGDATA%" status >nul 2>&1
 if errorlevel 1 (
     echo Starting Postgres...
-    "%PGBIN%\pg_ctl.exe" -D "%PGDATA%" -l "%ROOT%.devdata\pg.log" -o "-p 5433" start
+    "%PGBIN%\pg_ctl.exe" -D "%PGDATA%" -l "%ROOT%.devdata\pg.log" -o "-p %PGPORT% -h 127.0.0.1" start
 ) else (
     echo Postgres already running.
 )

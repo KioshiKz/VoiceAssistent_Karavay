@@ -13,8 +13,7 @@ type PendingDialog =
   | { kind: "confirm"; message: string }
   | { kind: "prompt"; message: string; defaultValue: string };
 
-/** Replaces window.alert/confirm/prompt: those are blocking native dialogs that
- * freeze the whole tab (and hang headless/automated testing) until dismissed. */
+/** Replaces native blocking dialogs so the app keeps one visual language. */
 export function DialogProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<PendingDialog | null>(null);
   const [inputValue, setInputValue] = useState("");
@@ -53,49 +52,53 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     <DialogContext.Provider value={{ alertMessage, confirmAction, promptText }}>
       {children}
       {pending && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.3)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-        >
-          <div style={{ background: "#fff", borderRadius: 8, padding: 20, minWidth: 320 }}>
-            <p style={{ marginTop: 0 }}>{pending.message}</p>
-            {pending.kind === "prompt" && (
-              <input
-                autoFocus
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                style={{ width: "100%", marginBottom: 12 }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") resolve(inputValue);
-                  if (e.key === "Escape") resolve(null);
-                }}
-              />
-            )}
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <div className="modal-header">
+              <div>
+                <h2>
+                  {pending.kind === "alert" && "Сообщение"}
+                  {pending.kind === "confirm" && "Подтверждение"}
+                  {pending.kind === "prompt" && "Введите значение"}
+                </h2>
+              </div>
+            </div>
+            <div className="modal-body">
+              <p className="dialog-message">{pending.message}</p>
+              {pending.kind === "prompt" && (
+                <input
+                  autoFocus
+                  value={inputValue}
+                  onChange={(event) => setInputValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") resolve(inputValue);
+                    if (event.key === "Escape") resolve(null);
+                  }}
+                />
+              )}
+            </div>
+            <div className="modal-footer">
               {pending.kind === "alert" && (
-                <button className="primary" onClick={() => resolve(undefined)}>
+                <button className="primary" type="button" onClick={() => resolve(undefined)}>
                   Ок
                 </button>
               )}
               {pending.kind === "confirm" && (
                 <>
-                  <button onClick={() => resolve(false)}>Отмена</button>
-                  <button className="primary" onClick={() => resolve(true)}>
+                  <button type="button" onClick={() => resolve(false)}>
+                    Отмена
+                  </button>
+                  <button className="primary" type="button" onClick={() => resolve(true)}>
                     Да
                   </button>
                 </>
               )}
               {pending.kind === "prompt" && (
                 <>
-                  <button onClick={() => resolve(null)}>Отмена</button>
-                  <button className="primary" onClick={() => resolve(inputValue)}>
+                  <button type="button" onClick={() => resolve(null)}>
+                    Отмена
+                  </button>
+                  <button className="primary" type="button" onClick={() => resolve(inputValue)}>
                     Ок
                   </button>
                 </>

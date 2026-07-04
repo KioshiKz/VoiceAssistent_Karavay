@@ -22,6 +22,6 @@ Thumbs.db
 
 # Docker
 postgres-data/
-
+backend/model/text_to_speach/vosk-model-ru-0.42
 # Local throwaway dev Postgres cluster (see docs/design.md dev notes)
 .devdata/

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Folder, Home } from "lucide-react";
 import type { FolderOut } from "../api/types";
 import { buildFolderTree, isDescendant, type FolderNode } from "../utils/folderTree";
 
@@ -36,29 +37,29 @@ function TreeNode({
         className={`folder-tree-node${isActive ? " active" : ""}${isDropTarget ? " drop-target" : ""}`}
         style={{ paddingLeft: 8 + depth * 14 }}
         draggable
-        onDragStart={(e) => e.dataTransfer.setData("text/folder-id", node.id)}
-        onDragOver={(e) => {
-          e.preventDefault();
+        onDragStart={(event) => event.dataTransfer.setData("text/folder-id", node.id)}
+        onDragOver={(event) => {
+          event.preventDefault();
           setDropTargetId(node.id);
         }}
         onDragLeave={() => setDropTargetId(null)}
-        onDrop={(e) => {
-          e.preventDefault();
+        onDrop={(event) => {
+          event.preventDefault();
           setDropTargetId(null);
-          const draggedId = e.dataTransfer.getData("text/folder-id");
+          const draggedId = event.dataTransfer.getData("text/folder-id");
           if (!draggedId || draggedId === node.id) return;
           if (isDescendant(folders, node.id, draggedId)) return;
           onMove(draggedId, node.id);
         }}
-        onDoubleClick={() => navigate(`/files/${node.id}`)}
         onClick={() => navigate(`/files/${node.id}`)}
       >
-        📁 {node.name}
+        <Folder size={16} />
+        <span>{node.name}</span>
       </div>
-      {node.children.map((c) => (
+      {node.children.map((child) => (
         <TreeNode
-          key={c.id}
-          node={c}
+          key={child.id}
+          node={child}
           depth={depth + 1}
           currentFolderId={currentFolderId}
           folders={folders}
@@ -79,20 +80,24 @@ export function FolderTree({ folders, currentFolderId, onMove }: FolderTreeProps
   return (
     <div
       className="folder-tree"
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        const draggedId = e.dataTransfer.getData("text/folder-id");
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        const draggedId = event.dataTransfer.getData("text/folder-id");
         if (draggedId) onMove(draggedId, null);
       }}
     >
-      <div className="folder-tree-node" onClick={() => navigate("/files")}>
-        🏠 Корень
+      <div className="folder-tree-heading">
+        <h2>Дерево</h2>
       </div>
-      {tree.map((n) => (
+      <div className={`folder-tree-node${currentFolderId ? "" : " active"}`} onClick={() => navigate("/files")}>
+        <Home size={16} />
+        <span>Корень</span>
+      </div>
+      {tree.map((node) => (
         <TreeNode
-          key={n.id}
-          node={n}
+          key={node.id}
+          node={node}
           depth={0}
           currentFolderId={currentFolderId}
           folders={folders}

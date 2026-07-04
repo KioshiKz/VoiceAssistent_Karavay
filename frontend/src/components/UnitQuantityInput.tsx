@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Plus, X } from "lucide-react";
 import type { MeasureType } from "../api/types";
-import { DISPLAY_UNITS, formatCompound } from "../utils/units";
+import { DISPLAY_UNITS, formatCompound, toCanonical } from "../utils/units";
 
 interface UnitQuantityInputProps {
   measureType: MeasureType;
@@ -8,49 +9,57 @@ interface UnitQuantityInputProps {
   onChange: (canonical: number) => void;
 }
 
-/** Compound entry (e.g. "3 л 200 мл"): value1/unit1 + optional value2/unit2,
- * combined into the single canonical integer the backend stores. */
+/** Compound entry combines one or two display units into the canonical Decimal-like number stored by the backend. */
 export function UnitQuantityInput({ measureType, valueCanonical, onChange }: UnitQuantityInputProps) {
   const units = DISPLAY_UNITS[measureType];
+  const defaultUnit = units[units.length > 1 ? 1 : 0].unit;
+  const baseUnit = units[0].unit;
   const [showCompound, setShowCompound] = useState(false);
 
-  const [unit1, setUnit1] = useState(units[units.length > 1 ? 1 : 0].unit);
-  const [value1, setValue1] = useState(0);
-  const [unit2, setUnit2] = useState(units[0].unit);
-  const [value2, setValue2] = useState(0);
+  const [unit1, setUnit1] = useState(defaultUnit);
+  const [value1, setValue1] = useState("");
+  const [unit2, setUnit2] = useState(baseUnit);
+  const [value2, setValue2] = useState("");
 
-  function recompute(v1: number, u1: string, compound: boolean, v2: number, u2: string) {
-    const f1 = units.find((u) => u.unit === u1)!.factor;
-    let canonical = Math.round(v1 * f1);
-    if (compound) {
-      const f2 = units.find((u) => u.unit === u2)!.factor;
-      canonical += Math.round(v2 * f2);
-    }
-    onChange(canonical);
+  useEffect(() => {
+    setShowCompound(false);
+    setUnit1(defaultUnit);
+    setValue1("");
+    setUnit2(baseUnit);
+    setValue2("");
+    onChange(0);
+  }, [baseUnit, defaultUnit, onChange]);
+
+  function recompute(v1: string, u1: string, compound: boolean, v2: string, u2: string) {
+    const first = toCanonical(v1, u1, measureType);
+    const second = compound ? toCanonical(v2, u2, measureType) : 0;
+    onChange(Math.round((first + second + Number.EPSILON) * 1000) / 1000);
   }
 
   return (
     <div className="quantity-input">
       <div className="pair">
         <input
-          type="number"
+          type="text"
+          inputMode="decimal"
           value={value1}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            setValue1(v);
-            recompute(v, unit1, showCompound, value2, unit2);
+          placeholder="0"
+          onChange={(event) => {
+            const value = event.target.value;
+            setValue1(value);
+            recompute(value, unit1, showCompound, value2, unit2);
           }}
         />
         <select
           value={unit1}
-          onChange={(e) => {
-            setUnit1(e.target.value);
-            recompute(value1, e.target.value, showCompound, value2, unit2);
+          onChange={(event) => {
+            setUnit1(event.target.value);
+            recompute(value1, event.target.value, showCompound, value2, unit2);
           }}
         >
-          {units.map((u) => (
-            <option key={u.unit} value={u.unit}>
-              {u.label}
+          {units.map((unit) => (
+            <option key={unit.unit} value={unit.unit}>
+              {unit.label}
             </option>
           ))}
         </select>
@@ -58,31 +67,34 @@ export function UnitQuantityInput({ measureType, valueCanonical, onChange }: Uni
 
       {units.length > 1 && !showCompound && (
         <button type="button" onClick={() => setShowCompound(true)}>
-          + добавить единицу
+          <Plus size={16} />
+          Единица
         </button>
       )}
 
       {showCompound && (
         <div className="pair">
           <input
-            type="number"
+            type="text"
+            inputMode="decimal"
             value={value2}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              setValue2(v);
-              recompute(value1, unit1, true, v, unit2);
+            placeholder="0"
+            onChange={(event) => {
+              const value = event.target.value;
+              setValue2(value);
+              recompute(value1, unit1, true, value, unit2);
             }}
           />
           <select
             value={unit2}
-            onChange={(e) => {
-              setUnit2(e.target.value);
-              recompute(value1, unit1, true, value2, e.target.value);
+            onChange={(event) => {
+              setUnit2(event.target.value);
+              recompute(value1, unit1, true, value2, event.target.value);
             }}
           >
-            {units.map((u) => (
-              <option key={u.unit} value={u.unit}>
-                {u.label}
+            {units.map((unit) => (
+              <option key={unit.unit} value={unit.unit}>
+                {unit.label}
               </option>
             ))}
           </select>
@@ -90,16 +102,17 @@ export function UnitQuantityInput({ measureType, valueCanonical, onChange }: Uni
             type="button"
             onClick={() => {
               setShowCompound(false);
-              setValue2(0);
-              recompute(value1, unit1, false, 0, unit2);
+              setValue2("");
+              recompute(value1, unit1, false, "", unit2);
             }}
+            title="Убрать вторую единицу"
           >
-            ✕
+            <X size={16} />
           </button>
         </div>
       )}
 
-      <span style={{ color: "#888", fontSize: 13 }}>= {formatCompound(valueCanonical, measureType)}</span>
+      <span className="muted">= {formatCompound(valueCanonical, measureType)}</span>
     </div>
   );
 }

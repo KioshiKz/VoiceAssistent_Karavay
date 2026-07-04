@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class IngredientCreate(BaseModel):
     name: str
-    measure_type: str = Field(pattern="^(weight|volume|time|temperature)$")
+    measure_type: str = Field(pattern="^(weight|volume|time|temperature|count)$")
     description: str | None = None
     allowed_container_weights_g: list[int] | None = None
     is_active: bool = True
@@ -13,7 +13,7 @@ class IngredientCreate(BaseModel):
 
 class IngredientUpdate(BaseModel):
     name: str | None = None
-    measure_type: str | None = Field(default=None, pattern="^(weight|volume|time|temperature)$")
+    measure_type: str | None = Field(default=None, pattern="^(weight|volume|time|temperature|count)$")
     description: str | None = None
     allowed_container_weights_g: list[int] | None = None
     is_active: bool | None = None

@@ -10,7 +10,7 @@ class ExecutionPlanStepOut(BaseModel):
     step_type: str
     ingredient_name_snapshot: str | None
     measure_type_snapshot: str | None
-    quantity_canonical_computed: int | None
+    quantity_canonical_computed: float | None
     quantity_display: str | None = None
     event_name_snapshot: str | None
     event_type_snapshot: str | None

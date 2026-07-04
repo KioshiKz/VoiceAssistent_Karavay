@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     CheckConstraint,
@@ -46,7 +47,7 @@ class ExecutionPlan(Base):
 class ExecutionPlanStep(Base):
     __tablename__ = "execution_plan_steps"
     __table_args__ = (
-        CheckConstraint("step_type IN ('ingredient','event')", name="exec_step_type_valid"),
+        CheckConstraint("step_type IN ('ingredient','event','ingredient_event')", name="exec_step_type_valid"),
         CheckConstraint("status IN ('pending','done')", name="exec_step_status_valid"),
         UniqueConstraint("execution_plan_id", "order_index", name="uq_exec_step_order"),
     )
@@ -60,7 +61,7 @@ class ExecutionPlanStep(Base):
 
     ingredient_name_snapshot: Mapped[str | None] = mapped_column(String(255))
     measure_type_snapshot: Mapped[str | None] = mapped_column(String(20))
-    quantity_canonical_computed: Mapped[int | None] = mapped_column(Integer)
+    quantity_canonical_computed: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
 
     event_name_snapshot: Mapped[str | None] = mapped_column(String(255))
     event_type_snapshot: Mapped[str | None] = mapped_column(String(30))

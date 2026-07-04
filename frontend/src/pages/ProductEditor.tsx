@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { BellRing, Plus, Save, Wheat, Workflow, X } from "lucide-react";
 import { eventsApi, ingredientsApi, productsApi } from "../api/endpoints";
 import type { EventTemplateOut, IngredientOut, ProductDetailOut } from "../api/types";
 import { RecipeStepList } from "../components/RecipeStepList";
 import { UnitQuantityInput } from "../components/UnitQuantityInput";
 import { useDialog } from "../components/DialogProvider";
+import { FileWorkspaceShell } from "../components/FileWorkspaceShell";
+
+type AddMode = "ingredient" | "event" | "ingredient_event" | null;
 
 export function ProductEditor() {
   const { productId } = useParams();
@@ -13,7 +17,7 @@ export function ProductEditor() {
   const [ingredients, setIngredients] = useState<IngredientOut[]>([]);
   const [events, setEvents] = useState<EventTemplateOut[]>([]);
 
-  const [addMode, setAddMode] = useState<"ingredient" | "event" | null>(null);
+  const [addMode, setAddMode] = useState<AddMode>(null);
   const [selectedIngredientId, setSelectedIngredientId] = useState("");
   const [ingredientQty, setIngredientQty] = useState(0);
   const [selectedEventId, setSelectedEventId] = useState("");
@@ -21,16 +25,27 @@ export function ProductEditor() {
 
   function reload() {
     if (!productId) return;
-    productsApi.get(productId).then((p) => {
-      setProduct(p);
-      ingredientsApi.listInFolder(p.folder_id).then(setIngredients);
-      eventsApi.listInFolder(p.folder_id).then(setEvents);
+    productsApi.get(productId).then((nextProduct) => {
+      setProduct(nextProduct);
+      ingredientsApi.listInFolder(nextProduct.folder_id).then(setIngredients);
+      eventsApi.listInFolder(nextProduct.folder_id).then(setEvents);
     });
   }
 
   useEffect(reload, [productId]);
 
-  if (!product) return <div className="editor-page">Загрузка...</div>;
+  if (!product) {
+    return (
+      <FileWorkspaceShell title="Продукция" subtitle="Загрузка карточки продукции." currentFolderId={null}>
+        <div className="empty-state">Загрузка...</div>
+      </FileWorkspaceShell>
+    );
+  }
+
+  const selectedIngredient = ingredients.find((ingredient) => ingredient.id === selectedIngredientId) ?? null;
+  const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+  const needsIngredient = addMode === "ingredient" || addMode === "ingredient_event";
+  const needsEvent = addMode === "event" || addMode === "ingredient_event";
 
   async function saveHeader() {
     if (!product) return;
@@ -38,8 +53,37 @@ export function ProductEditor() {
     alertMessage("Сохранено");
   }
 
-  const selectedIngredient = ingredients.find((i) => i.id === selectedIngredientId) ?? null;
-  const selectedEvent = events.find((e) => e.id === selectedEventId) ?? null;
+  function openStepModal(mode: Exclude<AddMode, null>) {
+    setAddMode(mode);
+    setSelectedIngredientId("");
+    setIngredientQty(0);
+    setSelectedEventId("");
+    setEventParams(mode === "ingredient_event" ? { start_phrase: "старт" } : {});
+  }
+
+  function closeStepModal() {
+    setAddMode(null);
+  }
+
+  function buildEventParams() {
+    if (!selectedEvent) return {};
+    if (selectedEvent.event_type === "timer") {
+      return {
+        duration_seconds: Number(eventParams.duration_seconds ?? 0),
+        start_phrase: String(eventParams.start_phrase ?? "старт"),
+      };
+    }
+    if (selectedEvent.event_type === "weight_check") {
+      return {
+        target_weight_g: Number(eventParams.target_weight_g ?? 0),
+        tolerance_g: Number(eventParams.tolerance_g ?? 0),
+      };
+    }
+    if (selectedEvent.event_type === "phrase_confirmation") {
+      return { phrase: String(eventParams.phrase ?? "") };
+    }
+    return {};
+  }
 
   async function addIngredientStep() {
     if (!product || !selectedIngredientId) return;
@@ -49,40 +93,39 @@ export function ProductEditor() {
       ingredient_id: selectedIngredientId,
       quantity_canonical: ingredientQty,
     });
-    setAddMode(null);
-    setSelectedIngredientId("");
-    setIngredientQty(0);
+    closeStepModal();
     reload();
   }
 
   async function addEventStep() {
     if (!product || !selectedEventId || !selectedEvent) return;
-    let params: Record<string, unknown> = {};
-    if (selectedEvent.event_type === "timer") {
-      params = { duration_seconds: Number(eventParams.duration_seconds ?? 0) };
-    } else if (selectedEvent.event_type === "weight_check") {
-      params = {
-        target_weight_g: Number(eventParams.target_weight_g ?? 0),
-        tolerance_g: Number(eventParams.tolerance_g ?? 0),
-      };
-    } else if (selectedEvent.event_type === "phrase_confirmation") {
-      params = { phrase: String(eventParams.phrase ?? "") };
-    }
     await productsApi.createStep(product.id, {
       step_type: "event",
       order_index: product.steps.length,
       event_template_id: selectedEventId,
-      event_params: params,
+      event_params: buildEventParams(),
     });
-    setAddMode(null);
-    setSelectedEventId("");
-    setEventParams({});
+    closeStepModal();
+    reload();
+  }
+
+  async function addLinkedStep() {
+    if (!product || !selectedIngredientId || !selectedEventId || !selectedEvent) return;
+    await productsApi.createStep(product.id, {
+      step_type: "ingredient_event",
+      order_index: product.steps.length,
+      ingredient_id: selectedIngredientId,
+      quantity_canonical: ingredientQty,
+      event_template_id: selectedEventId,
+      event_params: buildEventParams(),
+    });
+    closeStepModal();
     reload();
   }
 
   async function moveStep(stepId: string, direction: -1 | 1) {
     if (!product) return;
-    const ids = product.steps.map((s) => s.id);
+    const ids = product.steps.map((step) => step.id);
     const idx = ids.indexOf(stepId);
     const target = idx + direction;
     if (target < 0 || target >= ids.length) return;
@@ -97,121 +140,207 @@ export function ProductEditor() {
     reload();
   }
 
+  function submitStep() {
+    if (addMode === "ingredient") return addIngredientStep();
+    if (addMode === "event") return addEventStep();
+    return addLinkedStep();
+  }
+
+  const submitDisabled =
+    (needsIngredient && !selectedIngredientId) || (needsEvent && !selectedEventId) || (needsIngredient && !ingredientQty);
+
   return (
-    <div className="editor-page">
-      <Link to={`/files/${product.folder_id}`}>← К папке</Link>
-      <h2>Продукция</h2>
+    <FileWorkspaceShell
+      title="Продукция"
+      subtitle="Карточка продукции и пошаговая рецептура."
+      currentFolderId={product.folder_id}
+    >
+      <div className="editor-page file-editor-inner">
+        <Link to={`/files/${product.folder_id}`}>← К папке</Link>
 
-      <div className="editor-field">
-        <label>Название</label>
-        <input value={product.name} onChange={(e) => setProduct({ ...product, name: e.target.value })} />
-      </div>
-      <div className="editor-field">
-        <label>Базовое количество (шт)</label>
-        <input
-          type="number"
-          value={product.base_quantity}
-          onChange={(e) => setProduct({ ...product, base_quantity: Number(e.target.value) })}
-        />
-      </div>
-      <button className="primary" onClick={saveHeader}>
-        Сохранить
-      </button>
-
-      <h3 style={{ marginTop: 24 }}>Рецептура</h3>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <button onClick={() => setAddMode("ingredient")}>+ Добавить ингредиент</button>
-        <button onClick={() => setAddMode("event")}>+ Добавить событие</button>
-      </div>
-
-      {addMode === "ingredient" && (
-        <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
-          <select value={selectedIngredientId} onChange={(e) => setSelectedIngredientId(e.target.value)}>
-            <option value="">Выберите ингредиент</option>
-            {ingredients.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.name}
-              </option>
-            ))}
-          </select>
-          {selectedIngredient && (
-            <div style={{ marginTop: 8 }}>
-              <UnitQuantityInput
-                measureType={selectedIngredient.measure_type}
-                valueCanonical={ingredientQty}
-                onChange={setIngredientQty}
-              />
+        <section className="editor-card">
+          <div className="pane-heading">
+            <div>
+              <p className="eyebrow">Карточка</p>
+              <h2>{product.name || "Новая продукция"}</h2>
             </div>
-          )}
-          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-            <button className="primary" onClick={addIngredientStep} disabled={!selectedIngredientId}>
-              Добавить
+            <button className="primary" type="button" onClick={saveHeader}>
+              <Save size={17} />
+              Сохранить
             </button>
-            <button onClick={() => setAddMode(null)}>Отмена</button>
+          </div>
+
+          <label className="editor-field">
+            Название
+            <input value={product.name} onChange={(event) => setProduct({ ...product, name: event.target.value })} />
+          </label>
+          <label className="editor-field">
+            Базовое количество, шт.
+            <input
+              type="number"
+              value={product.base_quantity}
+              onChange={(event) => setProduct({ ...product, base_quantity: Number(event.target.value) })}
+            />
+          </label>
+        </section>
+
+        <section className="editor-card">
+          <div className="pane-heading">
+            <div>
+              <p className="eyebrow">Рецептура</p>
+              <h2>Шаги приготовления</h2>
+            </div>
+            <div className="action-row">
+              <button type="button" onClick={() => openStepModal("ingredient")}>
+                <Wheat size={17} />
+                Ингредиент
+              </button>
+              <button type="button" onClick={() => openStepModal("event")}>
+                <BellRing size={17} />
+                Событие
+              </button>
+              <button type="button" onClick={() => openStepModal("ingredient_event")}>
+                <Workflow size={17} />
+                Связанное
+              </button>
+            </div>
+          </div>
+
+          <RecipeStepList
+            steps={product.steps}
+            onMoveUp={(id) => moveStep(id, -1)}
+            onMoveDown={(id) => moveStep(id, 1)}
+            onDelete={deleteStep}
+          />
+        </section>
+      </div>
+
+      {addMode && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={closeStepModal}>
+          <div className="modal-card" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>
+                  {addMode === "ingredient"
+                    ? "Добавить ингредиент"
+                    : addMode === "event"
+                      ? "Добавить событие"
+                      : "Добавить связанное действие"}
+                </h2>
+                <p>Заполните параметры шага до добавления в рецептуру.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={closeStepModal} title="Закрыть">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {needsIngredient && (
+                <>
+                  <label className="modal-field">
+                    Ингредиент
+                    <select value={selectedIngredientId} onChange={(event) => setSelectedIngredientId(event.target.value)}>
+                      <option value="">Выберите ингредиент</option>
+                      {ingredients.map((ingredient) => (
+                        <option key={ingredient.id} value={ingredient.id}>
+                          {ingredient.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedIngredient && (
+                    <label className="modal-field">
+                      Количество
+                      <UnitQuantityInput
+                        measureType={selectedIngredient.measure_type}
+                        valueCanonical={ingredientQty}
+                        onChange={setIngredientQty}
+                      />
+                    </label>
+                  )}
+                </>
+              )}
+
+              {needsEvent && (
+                <>
+                  <label className="modal-field">
+                    Событие
+                    <select value={selectedEventId} onChange={(event) => setSelectedEventId(event.target.value)}>
+                      <option value="">Выберите событие</option>
+                      {events.map((event) => (
+                        <option key={event.id} value={event.id}>
+                          {event.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {selectedEvent?.event_type === "timer" && (
+                    <div className="modal-grid">
+                      <label className="modal-field">
+                        Длительность, секунд
+                        <input
+                          type="number"
+                          value={Number(eventParams.duration_seconds ?? 0)}
+                          onChange={(event) => setEventParams({ ...eventParams, duration_seconds: event.target.value })}
+                        />
+                      </label>
+                      <label className="modal-field">
+                        Кодовая фраза запуска
+                        <input
+                          value={String(eventParams.start_phrase ?? "старт")}
+                          onChange={(event) => setEventParams({ ...eventParams, start_phrase: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {selectedEvent?.event_type === "weight_check" && (
+                    <div className="modal-grid">
+                      <label className="modal-field">
+                        Целевой вес, г
+                        <input
+                          type="number"
+                          value={Number(eventParams.target_weight_g ?? 0)}
+                          onChange={(event) => setEventParams({ ...eventParams, target_weight_g: event.target.value })}
+                        />
+                      </label>
+                      <label className="modal-field">
+                        Допуск, г
+                        <input
+                          type="number"
+                          value={Number(eventParams.tolerance_g ?? 0)}
+                          onChange={(event) => setEventParams({ ...eventParams, tolerance_g: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {selectedEvent?.event_type === "phrase_confirmation" && (
+                    <label className="modal-field">
+                      Фраза подтверждения
+                      <input
+                        value={String(eventParams.phrase ?? "")}
+                        onChange={(event) => setEventParams({ ...eventParams, phrase: event.target.value })}
+                      />
+                    </label>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" onClick={closeStepModal}>
+                Отмена
+              </button>
+              <button className="primary" type="button" onClick={() => void submitStep()} disabled={submitDisabled}>
+                <Plus size={17} />
+                Добавить
+              </button>
+            </div>
           </div>
         </div>
       )}
-
-      {addMode === "event" && (
-        <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
-          <select value={selectedEventId} onChange={(e) => setSelectedEventId(e.target.value)}>
-            <option value="">Выберите событие</option>
-            {events.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
-          {selectedEvent?.event_type === "timer" && (
-            <div style={{ marginTop: 8 }}>
-              Длительность (сек):{" "}
-              <input
-                type="number"
-                value={Number(eventParams.duration_seconds ?? 0)}
-                onChange={(e) => setEventParams({ ...eventParams, duration_seconds: e.target.value })}
-              />
-            </div>
-          )}
-          {selectedEvent?.event_type === "weight_check" && (
-            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-              Целевой вес (г):{" "}
-              <input
-                type="number"
-                value={Number(eventParams.target_weight_g ?? 0)}
-                onChange={(e) => setEventParams({ ...eventParams, target_weight_g: e.target.value })}
-              />
-              Допуск (г):{" "}
-              <input
-                type="number"
-                value={Number(eventParams.tolerance_g ?? 0)}
-                onChange={(e) => setEventParams({ ...eventParams, tolerance_g: e.target.value })}
-              />
-            </div>
-          )}
-          {selectedEvent?.event_type === "phrase_confirmation" && (
-            <div style={{ marginTop: 8 }}>
-              Фраза:{" "}
-              <input
-                value={String(eventParams.phrase ?? "")}
-                onChange={(e) => setEventParams({ ...eventParams, phrase: e.target.value })}
-              />
-            </div>
-          )}
-          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-            <button className="primary" onClick={addEventStep} disabled={!selectedEventId}>
-              Добавить
-            </button>
-            <button onClick={() => setAddMode(null)}>Отмена</button>
-          </div>
-        </div>
-      )}
-
-      <RecipeStepList
-        steps={product.steps}
-        onMoveUp={(id) => moveStep(id, -1)}
-        onMoveDown={(id) => moveStep(id, 1)}
-        onDelete={deleteStep}
-      />
-    </div>
+    </FileWorkspaceShell>
   );
 }

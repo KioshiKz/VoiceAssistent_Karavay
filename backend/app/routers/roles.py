@@ -43,7 +43,11 @@ async def list_roles(db: AsyncSession = Depends(get_db)):
 
 @router.post("/roles", response_model=RoleOut, status_code=201, dependencies=[Depends(ADMIN_ONLY)])
 async def create_role(payload: RoleCreate, db: AsyncSession = Depends(get_db)):
-    role = Role(name=payload.name, description=payload.description)
+    role = Role(
+        name=payload.name,
+        description=payload.description,
+        order_visibility_ahead=payload.order_visibility_ahead,
+    )
     db.add(role)
     await db.commit()
     await db.refresh(role)

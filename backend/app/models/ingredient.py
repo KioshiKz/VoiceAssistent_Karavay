@@ -13,7 +13,7 @@ class Ingredient(Base):
     __tablename__ = "ingredients"
     __table_args__ = (
         CheckConstraint(
-            "measure_type IN ('weight','volume','time','temperature')", name="measure_type_valid"
+            "measure_type IN ('weight','volume','time','temperature','count')", name="measure_type_valid"
         ),
     )
 

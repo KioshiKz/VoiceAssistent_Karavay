@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { Save, Trash2 } from "lucide-react";
 import { ingredientsApi } from "../api/endpoints";
 import type { IngredientOut, MeasureType, UsedInProductOut } from "../api/types";
 import { useDialog } from "../components/DialogProvider";
+import { FileWorkspaceShell } from "../components/FileWorkspaceShell";
 
 const MEASURE_LABELS: Record<MeasureType, string> = {
   weight: "Вес",
   volume: "Объём",
   time: "Время",
   temperature: "Температура",
+  count: "Штуки",
 };
 
 export function IngredientEditor() {
@@ -22,14 +25,20 @@ export function IngredientEditor() {
 
   useEffect(() => {
     if (!ingredientId) return;
-    ingredientsApi.get(ingredientId).then((i) => {
-      setIngredient(i);
-      setContainerWeightsText((i.allowed_container_weights_g ?? []).join(", "));
+    ingredientsApi.get(ingredientId).then((nextIngredient) => {
+      setIngredient(nextIngredient);
+      setContainerWeightsText((nextIngredient.allowed_container_weights_g ?? []).join(", "));
     });
     ingredientsApi.usedIn(ingredientId).then(setUsedIn);
   }, [ingredientId]);
 
-  if (!ingredient) return <div className="editor-page">Загрузка...</div>;
+  if (!ingredient) {
+    return (
+      <FileWorkspaceShell title="Ингредиент" subtitle="Загрузка карточки ингредиента." currentFolderId={null}>
+        <div className="empty-state">Загрузка...</div>
+      </FileWorkspaceShell>
+    );
+  }
 
   async function save() {
     if (!ingredient) return;
@@ -37,10 +46,10 @@ export function IngredientEditor() {
     try {
       const weights = containerWeightsText
         .split(",")
-        .map((s) => s.trim())
+        .map((item) => item.trim())
         .filter(Boolean)
         .map(Number)
-        .filter((n) => !Number.isNaN(n));
+        .filter((item) => !Number.isNaN(item));
       const updated = await ingredientsApi.update(ingredient.id, {
         name: ingredient.name,
         measure_type: ingredient.measure_type,
@@ -62,78 +71,98 @@ export function IngredientEditor() {
       await ingredientsApi.remove(ingredient.id);
       navigate(`/files/${ingredient.folder_id}`);
     } catch {
-      alertMessage("Нельзя удалить: ингредиент используется в рецептуре. Деактивируйте вместо удаления.");
+      alertMessage("Нельзя удалить ингредиент: он используется в рецептуре. Деактивируйте его вместо удаления.");
     }
   }
 
   return (
-    <div className="editor-page">
-      <Link to={`/files/${ingredient.folder_id}`}>← К папке</Link>
-      <h2>Ингредиент</h2>
+    <FileWorkspaceShell
+      title="Ингредиент"
+      subtitle="Карточка сырья, единицы измерения и ограничения тары."
+      currentFolderId={ingredient.folder_id}
+    >
+      <div className="editor-page file-editor-inner">
+        <Link to={`/files/${ingredient.folder_id}`}>← К папке</Link>
 
-      <div className="editor-field">
-        <label>Название</label>
-        <input value={ingredient.name} onChange={(e) => setIngredient({ ...ingredient, name: e.target.value })} />
+        <section className="editor-card">
+          <div className="pane-heading">
+            <div>
+              <p className="eyebrow">Карточка</p>
+              <h2>{ingredient.name}</h2>
+            </div>
+            <div className="action-row">
+              <button className="primary" type="button" onClick={save} disabled={saving}>
+                <Save size={17} />
+                {saving ? "Сохранение..." : "Сохранить"}
+              </button>
+              <button className="danger" type="button" onClick={remove}>
+                <Trash2 size={17} />
+                Удалить
+              </button>
+            </div>
+          </div>
+
+          <label className="editor-field">
+            Название
+            <input value={ingredient.name} onChange={(event) => setIngredient({ ...ingredient, name: event.target.value })} />
+          </label>
+
+          <label className="editor-field">
+            Мера измерения
+            <select
+              value={ingredient.measure_type}
+              onChange={(event) => setIngredient({ ...ingredient, measure_type: event.target.value as MeasureType })}
+            >
+              {Object.entries(MEASURE_LABELS).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="editor-field">
+            Описание
+            <textarea
+              value={ingredient.description ?? ""}
+              onChange={(event) => setIngredient({ ...ingredient, description: event.target.value })}
+            />
+          </label>
+
+          <label className="editor-field">
+            Допустимые веса тары хранения, г
+            <input value={containerWeightsText} onChange={(event) => setContainerWeightsText(event.target.value)} />
+          </label>
+
+          <label className="checkbox-line">
+            <input
+              type="checkbox"
+              checked={ingredient.is_active}
+              onChange={(event) => setIngredient({ ...ingredient, is_active: event.target.checked })}
+            />
+            Активен
+          </label>
+        </section>
+
+        <section className="editor-card">
+          <div>
+            <p className="eyebrow">Связи</p>
+            <h2>Используется в продукции</h2>
+          </div>
+          {usedIn.length === 0 ? (
+            <p className="muted">Пока нигде не используется.</p>
+          ) : (
+            <div className="summary-list">
+              {usedIn.map((item) => (
+                <span key={item.product_id}>
+                  <Link to={`/products/${item.product_id}`}>{item.product_name}</Link>
+                  <small>{item.folder_path}</small>
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
-
-      <div className="editor-field">
-        <label>Мера измерения</label>
-        <select
-          value={ingredient.measure_type}
-          onChange={(e) => setIngredient({ ...ingredient, measure_type: e.target.value as MeasureType })}
-        >
-          {Object.entries(MEASURE_LABELS).map(([k, label]) => (
-            <option key={k} value={k}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="editor-field">
-        <label>Описание</label>
-        <textarea
-          value={ingredient.description ?? ""}
-          onChange={(e) => setIngredient({ ...ingredient, description: e.target.value })}
-        />
-      </div>
-
-      <div className="editor-field">
-        <label>Допустимые веса тары хранения (через запятую, в граммах)</label>
-        <input value={containerWeightsText} onChange={(e) => setContainerWeightsText(e.target.value)} />
-      </div>
-
-      <div className="editor-field">
-        <label>
-          <input
-            type="checkbox"
-            checked={ingredient.is_active}
-            onChange={(e) => setIngredient({ ...ingredient, is_active: e.target.checked })}
-          />{" "}
-          Активен
-        </label>
-      </div>
-
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="primary" onClick={save} disabled={saving}>
-          Сохранить
-        </button>
-        <button onClick={remove}>Удалить</button>
-      </div>
-
-      <h3 style={{ marginTop: 32 }}>Используется в продукции</h3>
-      {usedIn.length === 0 ? (
-        <p style={{ color: "#888" }}>Пока нигде не используется.</p>
-      ) : (
-        <ul>
-          {usedIn.map((u) => (
-            <li key={u.product_id}>
-              <Link to={`/products/${u.product_id}`}>{u.product_name}</Link>{" "}
-              <span style={{ color: "#888" }}>({u.folder_path})</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    </FileWorkspaceShell>
   );
 }

@@ -10,6 +10,7 @@ import { Users } from "./pages/Users";
 import { UploadOrder } from "./pages/UploadOrder";
 import { CurrentOrder } from "./pages/CurrentOrder";
 import { ExecutionView } from "./pages/ExecutionView";
+import { ExecutionQueue } from "./pages/ExecutionQueue";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 
 function App() {
@@ -93,6 +94,14 @@ function App() {
         element={
           <ProtectedRoute tabView="current_order">
             <CurrentOrder />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/execution"
+        element={
+          <ProtectedRoute tabView="execution_queue" globalCode="order.execute">
+            <ExecutionQueue />
           </ProtectedRoute>
         }
       />

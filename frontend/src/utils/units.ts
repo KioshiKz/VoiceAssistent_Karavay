@@ -16,25 +16,57 @@ export const DISPLAY_UNITS: Record<MeasureType, { unit: string; label: string; f
     { unit: "hour", label: "ч", factor: 3600 },
   ],
   temperature: [{ unit: "celsius", label: "°C", factor: 1 }],
+  count: [{ unit: "pcs", label: "шт", factor: 1 }],
 };
 
+export function parseDecimalInput(value: string): number {
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function quantize(value: number): number {
+  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
+function trim(value: number): string {
+  return quantize(value).toLocaleString("ru-RU", {
+    maximumFractionDigits: 3,
+    useGrouping: false,
+  });
+}
+
+export function toCanonical(value: string, unit: string, measureType: MeasureType): number {
+  const factor = DISPLAY_UNITS[measureType].find((item) => item.unit === unit)?.factor ?? 1;
+  return quantize(parseDecimalInput(value) * factor);
+}
+
 export function formatCompound(valueCanonical: number, measureType: MeasureType): string {
+  const value = quantize(valueCanonical);
   if (measureType === "weight") {
-    const kg = Math.floor(valueCanonical / 1000);
-    const g = valueCanonical % 1000;
-    return kg ? `${kg} кг ${g} г` : `${g} г`;
+    const kg = Math.floor(value / 1000);
+    const g = quantize(value - kg * 1000);
+    if (kg && g) return `${kg} кг ${trim(g)} г`;
+    if (kg) return `${kg} кг`;
+    return `${trim(g)} г`;
   }
   if (measureType === "volume") {
-    const l = Math.floor(valueCanonical / 1000);
-    const ml = valueCanonical % 1000;
-    return l ? `${l} л ${ml} мл` : `${ml} мл`;
+    const l = Math.floor(value / 1000);
+    const ml = quantize(value - l * 1000);
+    if (l && ml) return `${l} л ${trim(ml)} мл`;
+    if (l) return `${l} л`;
+    return `${trim(ml)} мл`;
   }
   if (measureType === "time") {
-    const h = Math.floor(valueCanonical / 3600);
-    const m = Math.floor((valueCanonical % 3600) / 60);
-    const s = valueCanonical % 60;
-    const parts = [h && `${h} ч`, m && `${m} мин`, s && `${s} сек`].filter(Boolean);
+    const h = Math.floor(value / 3600);
+    const m = Math.floor((value % 3600) / 60);
+    const s = quantize(value - h * 3600 - m * 60);
+    const parts = [h && `${h} ч`, m && `${m} мин`, s && `${trim(s)} сек`].filter(Boolean);
     return parts.length ? parts.join(" ") : "0 сек";
   }
-  return `${(valueCanonical / 10).toFixed(1)} °C`;
+  if (measureType === "temperature") {
+    return `${trim(value)} °C`;
+  }
+  return `${trim(value)} шт`;
 }

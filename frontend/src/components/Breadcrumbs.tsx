@@ -5,10 +5,10 @@ export function Breadcrumbs({ items }: { items: BreadcrumbOut[] }) {
   return (
     <div className="breadcrumbs">
       <Link to="/files">Файлы</Link>
-      {items.map((b) => (
-        <span key={b.id} style={{ display: "flex", gap: 6 }}>
+      {items.map((item) => (
+        <span key={item.id} style={{ display: "flex", gap: 6 }}>
           <span className="sep">/</span>
-          <Link to={`/files/${b.id}`}>{b.name}</Link>
+          <Link to={`/files/${item.id}`}>{item.name}</Link>
         </span>
       ))}
     </div>

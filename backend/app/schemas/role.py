@@ -1,16 +1,18 @@
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RoleCreate(BaseModel):
     name: str
     description: str | None = None
+    order_visibility_ahead: int | None = Field(default=None, ge=1)
 
 
 class RoleUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    order_visibility_ahead: int | None = Field(default=None, ge=1)
 
 
 class RoleOut(BaseModel):
@@ -18,6 +20,7 @@ class RoleOut(BaseModel):
     name: str
     description: str | None
     is_system: bool
+    order_visibility_ahead: int | None
 
     model_config = {"from_attributes": True}
 

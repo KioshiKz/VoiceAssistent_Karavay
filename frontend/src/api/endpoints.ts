@@ -8,6 +8,8 @@ import type {
   FolderOut,
   IngredientOut,
   MePermissions,
+  OrderLineHistoryOut,
+  OrderLineOut,
   OrderUploadOut,
   PermissionDef,
   ProductDetailOut,
@@ -18,6 +20,7 @@ import type {
   RolePermissionOut,
   TokenResponse,
   UsedInProductOut,
+  VoiceEventOut,
   UserListOut,
   UserOut,
 } from "./types";
@@ -34,11 +37,17 @@ export const tabsApi = {
   list: () => apiClient.get<AppTab[]>("/tabs").then((r) => r.data),
 };
 
+export const voiceApi = {
+  events: (after = 0) => apiClient.get<VoiceEventOut[]>("/voice/events", { params: { after } }).then((r) => r.data),
+};
+
 export const rolesApi = {
   list: () => apiClient.get<Role[]>("/roles").then((r) => r.data),
-  create: (name: string, description?: string) =>
-    apiClient.post<Role>("/roles", { name, description }).then((r) => r.data),
-  update: (id: string, payload: Partial<Pick<Role, "name" | "description">>) =>
+  create: (name: string, description?: string, orderVisibilityAhead?: number | null) =>
+    apiClient
+      .post<Role>("/roles", { name, description, order_visibility_ahead: orderVisibilityAhead })
+      .then((r) => r.data),
+  update: (id: string, payload: Partial<Pick<Role, "name" | "description" | "order_visibility_ahead">>) =>
     apiClient.patch<Role>(`/roles/${id}`, payload).then((r) => r.data),
   remove: (id: string) => apiClient.delete(`/roles/${id}`).then((r) => r.data),
   permissionDefs: () => apiClient.get<PermissionDef[]>("/permission-defs").then((r) => r.data),
@@ -107,7 +116,7 @@ export const productsApi = {
   createStep: (
     productId: string,
     payload: {
-      step_type: "ingredient" | "event";
+      step_type: "ingredient" | "event" | "ingredient_event";
       order_index: number;
       ingredient_id?: string;
       quantity_canonical?: number;
@@ -129,17 +138,24 @@ export const productsApi = {
 };
 
 export const ordersApi = {
-  upload: (file: File, executionDate: string) => {
+  upload: (file: File, executionDate: string, workshopFolderId?: string | null) => {
     const form = new FormData();
     form.append("file", file);
     form.append("execution_date", executionDate);
+    if (workshopFolderId) form.append("workshop_folder_id", workshopFolderId);
     return apiClient
       .post<OrderUploadOut>("/orders/upload", form, { headers: { "Content-Type": "multipart/form-data" } })
       .then((r) => r.data);
   },
   current: () => apiClient.get<CurrentOrderOut>("/orders/current").then((r) => r.data),
   match: (lineId: string, productId: string) =>
-    apiClient.patch(`/order-lines/${lineId}/match`, { product_id: productId }).then((r) => r.data),
+    apiClient.patch<OrderLineOut>(`/order-lines/${lineId}/match`, { product_id: productId }).then((r) => r.data),
+  updateLine: (lineId: string, payload: Partial<{ quantity: number; due_time: string; matched_product_id: string | null }>) =>
+    apiClient.patch<OrderLineOut>(`/order-lines/${lineId}`, payload).then((r) => r.data),
+  cancelLine: (lineId: string, reason: string) =>
+    apiClient.post<OrderLineOut>(`/order-lines/${lineId}/cancel`, { reason }).then((r) => r.data),
+  history: (lineId: string) =>
+    apiClient.get<OrderLineHistoryOut[]>(`/order-lines/${lineId}/history`).then((r) => r.data),
 };
 
 export const executionApi = {
@@ -147,4 +163,6 @@ export const executionApi = {
     apiClient.get<ExecutionPlanOut>(`/order-lines/${orderLineId}/execution-plan`).then((r) => r.data),
   advance: (planId: string) =>
     apiClient.post<ExecutionPlanOut>(`/execution-plans/${planId}/advance`).then((r) => r.data),
+  rewind: (planId: string) =>
+    apiClient.post<ExecutionPlanOut>(`/execution-plans/${planId}/rewind`).then((r) => r.data),
 };

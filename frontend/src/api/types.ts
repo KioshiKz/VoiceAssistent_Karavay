@@ -40,6 +40,7 @@ export interface Role {
   name: string;
   description: string | null;
   is_system: boolean;
+  order_visibility_ahead: number | null;
 }
 
 export interface RolePermissionEntry {
@@ -109,7 +110,7 @@ export interface FolderContentOut {
   events: EventBrief[];
 }
 
-export type MeasureType = "weight" | "volume" | "time" | "temperature";
+export type MeasureType = "weight" | "volume" | "time" | "temperature" | "count";
 export type EventType = "timer" | "weight_check" | "phrase_confirmation";
 
 export interface IngredientOut {
@@ -153,7 +154,7 @@ export interface RecipeStepOut {
   id: string;
   product_id: string;
   order_index: number;
-  step_type: "ingredient" | "event";
+  step_type: "ingredient" | "event" | "ingredient_event";
   ingredient: IngredientRef | null;
   quantity_canonical: number | null;
   quantity_display: string | null;
@@ -175,11 +176,22 @@ export interface ProductDetailOut extends ProductOut {
 
 export interface OrderLineOut {
   id: string;
+  order_id: string;
   product_name_raw: string;
   quantity: number;
   due_time: string;
   match_status: "matched" | "unmatched";
   matched_product_id: string | null;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  cancellation_reason: string | null;
+  cancelled_by: string | null;
+  cancelled_by_name: string | null;
+  cancelled_at: string | null;
+  last_advanced_by: string | null;
+  last_advanced_by_name: string | null;
+  last_advanced_at: string | null;
+  workshop_folder_id: string | null;
+  workshop_folder_name: string | null;
 }
 
 export interface OrderUploadOut {
@@ -196,9 +208,21 @@ export interface CurrentOrderOut {
   lines: OrderLineOut[];
 }
 
+export interface OrderLineHistoryOut {
+  id: string;
+  order_line_id: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  event_type: string;
+  old_value: Record<string, unknown> | null;
+  new_value: Record<string, unknown> | null;
+  note: string | null;
+  created_at: string;
+}
+
 export interface ExecutionPlanStepOut {
   order_index: number;
-  step_type: "ingredient" | "event";
+  step_type: "ingredient" | "event" | "ingredient_event";
   ingredient_name_snapshot: string | null;
   measure_type_snapshot: MeasureType | null;
   quantity_canonical_computed: number | null;
@@ -218,4 +242,11 @@ export interface ExecutionPlanOut {
   status: "not_started" | "in_progress" | "completed";
   current_step_index: number;
   steps: ExecutionPlanStepOut[];
+}
+
+export interface VoiceEventOut {
+  id: number;
+  text: string;
+  source: string;
+  created_at: string;
 }
