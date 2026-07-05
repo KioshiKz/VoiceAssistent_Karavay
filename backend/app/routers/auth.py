@@ -68,6 +68,7 @@ async def me_permissions(user: User = Depends(get_current_user), db: AsyncSessio
     global_perms = {
         "order.execute": await permission_service.has_global_permission(db, user, "order.execute"),
         "admin.manage": await permission_service.has_global_permission(db, user, "admin.manage"),
+        "recipe.full_view": await permission_service.has_global_permission(db, user, "recipe.full_view"),
     }
 
     return MePermissions(tabs=tab_perms, global_=global_perms, system_role=is_system)

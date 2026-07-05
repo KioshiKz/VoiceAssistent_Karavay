@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { ordersApi } from "../api/endpoints";
 import type { CurrentOrderOut, OrderLineOut } from "../api/types";
 import { ConsoleShell } from "../components/ConsoleShell";
 import { ExecutionPanel } from "../components/ExecutionPanel";
+import { VoiceAssistant } from "../components/VoiceAssistant";
 
 function statusLabel(status: OrderLineOut["status"]) {
   if (status === "pending") return "ожидает";
@@ -15,8 +16,22 @@ function statusLabel(status: OrderLineOut["status"]) {
 export function ExecutionQueue() {
   const [order, setOrder] = useState<CurrentOrderOut | null>(null);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(() => window.sessionStorage.getItem("execution-fullscreen-requested") === "1");
   const [loading, setLoading] = useState(false);
   const [empty, setEmpty] = useState(false);
+
+  const setExecutionFullscreen = useCallback((next: boolean) => {
+    setFullscreen(next);
+    if (next) window.sessionStorage.setItem("execution-fullscreen-requested", "1");
+    else window.sessionStorage.removeItem("execution-fullscreen-requested");
+
+    if (next && !document.fullscreenElement) {
+      void document.documentElement.requestFullscreen?.().catch(() => undefined);
+    }
+    if (!next && document.fullscreenElement) {
+      void document.exitFullscreen?.().catch(() => undefined);
+    }
+  }, []);
 
   function reload() {
     setLoading(true);
@@ -34,6 +49,16 @@ export function ExecutionQueue() {
   }
 
   useEffect(reload, []);
+
+  useEffect(() => {
+    function onVoiceCommand(event: Event) {
+      const command = (event as CustomEvent<{ command: string }>).detail?.command;
+      if (command === "fullscreen") setExecutionFullscreen(true);
+    }
+
+    window.addEventListener("voice-command", onVoiceCommand);
+    return () => window.removeEventListener("voice-command", onVoiceCommand);
+  }, [setExecutionFullscreen]);
 
   const groups = useMemo(() => {
     const map = new Map<string, OrderLineOut[]>();
@@ -53,6 +78,15 @@ export function ExecutionQueue() {
     const firstExecutable = order.lines.find((line) => line.match_status === "matched" && line.status !== "cancelled");
     setSelectedLineId(firstExecutable?.id ?? null);
   }, [order, selectedLineId]);
+
+  if (fullscreen && order && selectedLineId) {
+    return (
+      <div className="execution-fullscreen-page">
+        <ExecutionPanel orderLineId={selectedLineId} fullscreen onFullscreenChange={setExecutionFullscreen} />
+        <VoiceAssistant />
+      </div>
+    );
+  }
 
   return (
     <ConsoleShell
@@ -104,7 +138,7 @@ export function ExecutionQueue() {
           </aside>
 
           <section className="execution-center">
-            <ExecutionPanel orderLineId={selectedLineId} />
+            <ExecutionPanel orderLineId={selectedLineId} fullscreen={fullscreen} onFullscreenChange={setExecutionFullscreen} />
           </section>
         </div>
       )}

@@ -28,6 +28,8 @@ class ExecutionPlanOut(BaseModel):
     multiplier: float
     status: str
     current_step_index: int
+    total_steps: int
+    can_view_full_recipe: bool
     steps: list[ExecutionPlanStepOut]
 
     model_config = {"from_attributes": True}

@@ -1,5 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, BellRing, CheckCircle2, Clock3, Play, RotateCcw, Wheat } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  BellRing,
+  CheckCircle2,
+  Clock3,
+  Maximize2,
+  Minimize2,
+  Play,
+  RotateCcw,
+  Wheat,
+} from "lucide-react";
 import { executionApi } from "../api/endpoints";
 import type { ExecutionPlanOut, ExecutionPlanStepOut } from "../api/types";
 
@@ -15,6 +26,8 @@ interface ActiveTimer {
 
 interface ExecutionPanelProps {
   orderLineId: string | null;
+  fullscreen?: boolean;
+  onFullscreenChange?: (next: boolean) => void;
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -70,7 +83,83 @@ function stepKey(plan: ExecutionPlanOut, step: ExecutionPlanStepOut) {
   return `${plan.id}:${step.order_index}`;
 }
 
-export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
+type TimerCue = "start" | "tick" | "done";
+
+function playTimerCue(cue: TimerCue) {
+  const AudioContextCtor =
+    window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return;
+
+  const sequences: Record<TimerCue, Array<[number, number, number]>> = {
+    start: [
+      [440, 0.07, 0.08],
+      [660, 0.09, 0.08],
+    ],
+    tick: [[520, 0.035, 0.025]],
+    done: [
+      [740, 0.1, 0.1],
+      [940, 0.1, 0.1],
+      [1180, 0.16, 0.1],
+    ],
+  };
+
+  try {
+    const context = new AudioContextCtor();
+    let offset = 0;
+    for (const [frequency, duration, volume] of sequences[cue]) {
+      const start = context.currentTime + offset;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(volume, start);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(start);
+      oscillator.stop(start + duration);
+      offset += duration + 0.05;
+    }
+    window.setTimeout(() => void context.close(), Math.ceil((offset + 0.1) * 1000));
+  } catch {
+    // Browser audio may be blocked until the page receives a user gesture.
+  }
+}
+
+function speakText(text: string) {
+  if (!("speechSynthesis" in window)) return;
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "ru-RU";
+    utterance.rate = 0.95;
+    utterance.pitch = 1;
+    window.speechSynthesis.speak(utterance);
+  } catch {
+    // Speech synthesis is optional for this interface.
+  }
+}
+
+function stepSpeech(step: ExecutionPlanStepOut, stepNumber: number, totalSteps: number) {
+  const base = `Шаг ${stepNumber} из ${totalSteps}.`;
+  if (step.step_type === "ingredient") {
+    return `${base} Добавьте ${step.quantity_display ?? ""}: ${step.ingredient_name_snapshot ?? "ингредиент"}.`;
+  }
+  if (step.step_type === "ingredient_event") {
+    return `${base} Постепенно добавьте ${step.quantity_display ?? ""}: ${
+      step.ingredient_name_snapshot ?? "ингредиент"
+    }. ${stepDetails(step)}.`;
+  }
+  if (step.event_type_snapshot === "timer") {
+    return `${base} ${step.event_name_snapshot ?? "Событие"}. Для запуска таймера скажите ${timerStartPhrase(step)}.`;
+  }
+  if (step.event_type_snapshot === "phrase_confirmation") {
+    return `${base} ${step.event_name_snapshot ?? "Событие"}. Скажите кодовую фразу ${confirmationPhrase(step)}.`;
+  }
+  return `${base} ${stepTitle(step)}.`;
+}
+
+export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenChange }: ExecutionPanelProps) {
   const [plan, setPlan] = useState<ExecutionPlanOut | null>(null);
   const [loading, setLoading] = useState(false);
   const [advancing, setAdvancing] = useState(false);
@@ -79,8 +168,11 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
   const [activeTimer, setActiveTimerState] = useState<ActiveTimer | null>(() => readJson(ACTIVE_TIMER_KEY, null));
   const [completedTimers, setCompletedTimers] = useState<string[]>(() => readJson(COMPLETED_TIMERS_KEY, []));
   const [confirmedPhrases, setConfirmedPhrases] = useState<string[]>(() => readJson(CONFIRMED_PHRASES_KEY, []));
+  const announcedStepKeyRef = useRef<string | null>(null);
+  const lastTickRef = useRef<number | null>(null);
 
   useEffect(() => {
+    announcedStepKeyRef.current = null;
     if (!orderLineId) {
       setPlan(null);
       return;
@@ -123,12 +215,15 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
 
   useEffect(() => {
     if (!activeTimer || activeTimer.endsAt > now) return;
+    playTimerCue("done");
     rememberCompletedTimer(activeTimer.key);
     setActiveTimer(null);
   }, [activeTimer, now, rememberCompletedTimer, setActiveTimer]);
 
   const currentStep = plan?.steps[plan.current_step_index];
   const currentStepKey = plan && currentStep ? stepKey(plan, currentStep) : null;
+  const totalSteps = plan?.total_steps ?? plan?.steps.length ?? 0;
+  const currentStepNumber = plan ? Math.min(plan.current_step_index + 1, totalSteps) : 0;
   const isTimerStep = currentStep?.event_type_snapshot === "timer";
   const isPhraseStep = currentStep?.event_type_snapshot === "phrase_confirmation";
   const timerDone = !!currentStepKey && completedTimers.includes(currentStepKey);
@@ -136,20 +231,43 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
   const timerBlocked = !!currentStep && isTimerStep && !timerDone;
   const phraseBlocked = !!currentStep && isPhraseStep && !phraseConfirmed;
   const activeRemaining = activeTimer ? Math.max(0, Math.ceil((activeTimer.endsAt - now) / 1000)) : 0;
+  const hiddenFutureSteps = plan ? Math.max(0, plan.total_steps - plan.steps.length) : 0;
 
   const progressText = useMemo(() => {
     if (!plan) return "";
     if (plan.status === "completed") return "Все шаги выполнены";
-    return `Шаг ${plan.current_step_index + 1} из ${plan.steps.length}`;
+    return `Шаг ${Math.min(plan.current_step_index + 1, plan.total_steps)} из ${plan.total_steps}`;
   }, [plan]);
+
+  useEffect(() => {
+    if (!plan || !currentStep || !currentStepKey || plan.status === "completed") return;
+    if (announcedStepKeyRef.current === currentStepKey) return;
+    announcedStepKeyRef.current = currentStepKey;
+    speakText(stepSpeech(currentStep, currentStepNumber, totalSteps));
+  }, [currentStep, currentStepKey, currentStepNumber, plan, totalSteps]);
+
+  useEffect(() => {
+    if (!activeTimer || activeRemaining <= 0) {
+      lastTickRef.current = null;
+      return;
+    }
+    if (lastTickRef.current === activeRemaining) return;
+    lastTickRef.current = activeRemaining;
+    playTimerCue("tick");
+  }, [activeRemaining, activeTimer]);
 
   const startTimer = useCallback(() => {
     if (!plan || !currentStep || !currentStepKey || !isTimerStep) return false;
+    if (timerDone || activeTimer?.key === currentStepKey) {
+      setError(null);
+      return true;
+    }
     const duration = timerDuration(currentStep);
     if (duration <= 0) {
       rememberCompletedTimer(currentStepKey);
       return true;
     }
+    playTimerCue("start");
     setActiveTimer({
       key: currentStepKey,
       label: stepTitle(currentStep),
@@ -157,7 +275,7 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
     });
     setError(null);
     return true;
-  }, [currentStep, currentStepKey, isTimerStep, plan, rememberCompletedTimer, setActiveTimer]);
+  }, [activeTimer?.key, currentStep, currentStepKey, isTimerStep, plan, rememberCompletedTimer, setActiveTimer, timerDone]);
 
   const confirmPhrase = useCallback(() => {
     if (!currentStepKey) return;
@@ -207,6 +325,7 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
       if (command === "advance") void advance();
       if (command === "rewind") void rewind();
       if (command === "start") startTimer();
+      if (command === "fullscreen") onFullscreenChange?.(true);
     }
 
     function onVoiceTranscript(event: Event) {
@@ -228,7 +347,17 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
       window.removeEventListener("voice-command", onVoiceCommand);
       window.removeEventListener("voice-transcript", onVoiceTranscript);
     };
-  }, [advance, confirmPhrase, currentStep, currentStepKey, isPhraseStep, isTimerStep, rewind, startTimer]);
+  }, [
+    advance,
+    confirmPhrase,
+    currentStep,
+    currentStepKey,
+    isPhraseStep,
+    isTimerStep,
+    onFullscreenChange,
+    rewind,
+    startTimer,
+  ]);
 
   if (!orderLineId) {
     return <div className="empty-state">Заявка пока не выбрана.</div>;
@@ -243,14 +372,22 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
   }
 
   return (
-    <div className="execution-panel">
-      {activeTimer && activeRemaining > 0 && (
-        <div className="timer-widget">
-          <Clock3 size={17} />
-          <strong>{formatDuration(activeRemaining)}</strong>
-          <span>{activeTimer.label}</span>
-        </div>
-      )}
+    <div className={`execution-panel${fullscreen ? " fullscreen" : ""}`}>
+      {activeTimer &&
+        activeRemaining > 0 &&
+        (fullscreen ? (
+          <section className="timer-fullscreen">
+            <Clock3 size={58} />
+            <strong>{formatDuration(activeRemaining)}</strong>
+            <span>{activeTimer.label}</span>
+          </section>
+        ) : (
+          <div className="timer-widget">
+            <Clock3 size={17} />
+            <strong>{formatDuration(activeRemaining)}</strong>
+            <span>{activeTimer.label}</span>
+          </div>
+        ))}
 
       <div className="execution-toolbar">
         <div>
@@ -258,6 +395,12 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
           <h2>{progressText}</h2>
         </div>
         <div className="action-row">
+          {onFullscreenChange && (
+            <button type="button" onClick={() => onFullscreenChange(!fullscreen)}>
+              {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              {fullscreen ? "Выйти" : "Полный экран"}
+            </button>
+          )}
           <button type="button" onClick={rewind} disabled={advancing || plan.current_step_index <= 0}>
             <ArrowLeft size={16} />
             Вернуться
@@ -272,10 +415,10 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
       </div>
 
       <div className="execution-progress">
-        {plan.steps.map((step, idx) => (
+        {Array.from({ length: totalSteps }).map((_, idx) => (
           <span
-            key={`${step.order_index}-${idx}`}
-            className={`dot${step.status === "done" ? " done" : ""}${idx === plan.current_step_index ? " current" : ""}`}
+            key={`progress-${idx}`}
+            className={`dot${idx < plan.current_step_index ? " done" : ""}${idx === plan.current_step_index ? " current" : ""}`}
           />
         ))}
       </div>
@@ -337,6 +480,13 @@ export function ExecutionPanel({ orderLineId }: ExecutionPanelProps) {
             <small>{step.step_type === "ingredient_event" ? `${step.quantity_display ?? ""} · ${stepDetails(step)}` : stepDetails(step)}</small>
           </div>
         ))}
+        {hiddenFutureSteps > 0 && (
+          <div className="execution-step-line locked">
+            <span>...</span>
+            <strong>Следующий шаг скрыт</strong>
+            <small>Откроется после выполнения текущего шага</small>
+          </div>
+        )}
       </div>
     </div>
   );

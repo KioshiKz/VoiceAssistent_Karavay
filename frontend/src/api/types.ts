@@ -241,6 +241,8 @@ export interface ExecutionPlanOut {
   multiplier: number;
   status: "not_started" | "in_progress" | "completed";
   current_step_index: number;
+  total_steps: number;
+  can_view_full_recipe: boolean;
   steps: ExecutionPlanStepOut[];
 }
 

@@ -3,7 +3,8 @@ import { Mic } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { voiceApi } from "../api/endpoints";
 
-type VoiceCommand = "advance" | "rewind" | "start";
+type VoiceCommand = "advance" | "rewind" | "start" | "fullscreen";
+type VoiceCue = "wake" | "success" | "error";
 
 interface SpeechRecognitionResultLike {
   readonly transcript: string;
@@ -52,6 +53,46 @@ function emitVoiceTranscript(text: string) {
   return event.defaultPrevented;
 }
 
+function playVoiceCue(cue: VoiceCue) {
+  const AudioContextCtor =
+    window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return;
+
+  const sequences: Record<VoiceCue, Array<[number, number]>> = {
+    wake: [
+      [740, 0.08],
+      [980, 0.1],
+    ],
+    success: [
+      [620, 0.07],
+      [840, 0.09],
+    ],
+    error: [[180, 0.18]],
+  };
+
+  try {
+    const context = new AudioContextCtor();
+    let offset = 0;
+    for (const [frequency, duration] of sequences[cue]) {
+      const start = context.currentTime + offset;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = cue === "error" ? "sawtooth" : "sine";
+      oscillator.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.08, start);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(start);
+      oscillator.stop(start + duration);
+      offset += duration + 0.04;
+    }
+    window.setTimeout(() => void context.close(), Math.ceil((offset + 0.1) * 1000));
+  } catch {
+    // Browser audio may be blocked until the page receives a user gesture.
+  }
+}
+
 export function VoiceAssistant() {
   const navigate = useNavigate();
   const [supported, setSupported] = useState(true);
@@ -78,37 +119,52 @@ export function VoiceAssistant() {
   }, []);
 
   const handleCommand = useCallback((text: string) => {
+    if (text.includes("полный экран")) {
+      window.sessionStorage.setItem("execution-fullscreen-requested", "1");
+      emitVoiceCommand("fullscreen");
+      navigate("/execution");
+      showMessage("Открываю полный экран");
+      playVoiceCue("success");
+      setArmedState(false);
+      return;
+    }
     if (text.includes("открыть текущую заявку")) {
       navigate("/execution");
       showMessage("Открываю выполнение заявки");
+      playVoiceCue("success");
       setArmedState(false);
       return;
     }
     if (text.includes("дальше")) {
       emitVoiceCommand("advance");
       showMessage("Команда: дальше");
+      playVoiceCue("success");
       setArmedState(false);
       return;
     }
     if (text.includes("вернуться") || text.includes("вернутся") || text.includes("назад")) {
       emitVoiceCommand("rewind");
       showMessage("Команда: вернуться");
+      playVoiceCue("success");
       setArmedState(false);
       return;
     }
     if (text.includes("старт")) {
       emitVoiceCommand("start");
       showMessage("Команда: старт");
+      playVoiceCue("success");
       setArmedState(false);
       return;
     }
     if (emitVoiceTranscript(text)) {
       showMessage("Кодовая фраза принята");
+      playVoiceCue("success");
       setArmedState(false);
       return;
     }
 
     showMessage("Не верная команда");
+    playVoiceCue("error");
   }, [navigate, setArmedState, showMessage]);
 
   const handleText = useCallback((rawText: string) => {
@@ -129,6 +185,7 @@ export function VoiceAssistant() {
       if (text.includes("помощник")) {
         setArmedState(true);
         showMessage("Слушаю команду");
+        playVoiceCue("wake");
         const commandText = text.replace("помощник", "").trim();
         if (commandText) handleCommand(commandText);
       }
