@@ -18,17 +18,25 @@ PG_DATA = ROOT / ".devdata" / "pgdata"
 PG_LOG = ROOT / ".devdata" / "pg.log"
 PG_CTL = Path(r"C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe")
 
-PG_PORT = 55433
+PG_PORT = 5433
 BACKEND_PORT = 8000
 FRONTEND_PORT = 5173
 VOICE_SCRIPT = BACKEND_DIR / "model" / "text_to_speach" / "test.py"
+
+
+def powershell_executable() -> str:
+    return (
+        shutil.which("powershell.exe")
+        or shutil.which("powershell")
+        or r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    )
 
 
 def listen_pids(port: int) -> list[int]:
     if os.name != "nt":
         return []
     command = [
-        "powershell",
+        powershell_executable(),
         "-NoProfile",
         "-Command",
         (

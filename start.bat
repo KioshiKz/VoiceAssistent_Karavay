@@ -3,7 +3,7 @@ setlocal
 
 set "ROOT=%~dp0"
 set "PGBIN=C:\Program Files\PostgreSQL\18\bin"
-set "PGPORT=55433"
+set "PGPORT=5433"
 set "PGDATA=%ROOT%.devdata\pgdata"
 set "SYS=%SystemRoot%\System32"
 
