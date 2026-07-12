@@ -3,7 +3,7 @@ import { Mic } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { voiceApi } from "../api/endpoints";
 
-type VoiceCommand = "advance" | "rewind" | "start" | "fullscreen";
+type VoiceCommand = "advance" | "rewind" | "start" | "stop" | "fullscreen";
 type VoiceCue = "wake" | "success" | "error";
 
 interface SpeechRecognitionResultLike {
@@ -43,8 +43,10 @@ declare global {
   }
 }
 
-function emitVoiceCommand(command: VoiceCommand) {
-  window.dispatchEvent(new CustomEvent("voice-command", { detail: { command } }));
+function emitVoiceCommand(command: VoiceCommand): boolean {
+  const event = new CustomEvent("voice-command", { detail: { command }, cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
 }
 
 function emitVoiceTranscript(text: string) {
@@ -128,31 +130,43 @@ export function VoiceAssistant() {
       setArmedState(false);
       return;
     }
-    if (text.includes("открыть текущую заявку")) {
+    if (
+      text.includes("открыть текущую заявку") ||
+      text.includes("открыть заявку") ||
+      text.includes("текущая заявка") ||
+      text.includes("заявки")
+    ) {
       navigate("/execution");
       showMessage("Открываю выполнение заявки");
       playVoiceCue("success");
       setArmedState(false);
       return;
     }
-    if (text.includes("дальше")) {
-      emitVoiceCommand("advance");
-      showMessage("Команда: дальше");
-      playVoiceCue("success");
+    if (text.includes("остановить") || text.includes("стоп")) {
+      const handled = emitVoiceCommand("stop");
+      showMessage(handled ? "Таймер остановлен" : "Сейчас нечего останавливать");
+      playVoiceCue(handled ? "success" : "error");
+      setArmedState(false);
+      return;
+    }
+    if (text.includes("дальше") || text.includes("некст") || text.includes("продолжить")) {
+      const handled = emitVoiceCommand("advance");
+      showMessage(handled ? "Команда: дальше" : "Сейчас нельзя перейти дальше");
+      playVoiceCue(handled ? "success" : "error");
       setArmedState(false);
       return;
     }
     if (text.includes("вернуться") || text.includes("вернутся") || text.includes("назад")) {
-      emitVoiceCommand("rewind");
-      showMessage("Команда: вернуться");
-      playVoiceCue("success");
+      const handled = emitVoiceCommand("rewind");
+      showMessage(handled ? "Команда: вернуться" : "Нельзя вернуться назад");
+      playVoiceCue(handled ? "success" : "error");
       setArmedState(false);
       return;
     }
     if (text.includes("старт")) {
-      emitVoiceCommand("start");
-      showMessage("Команда: старт");
-      playVoiceCue("success");
+      const handled = emitVoiceCommand("start");
+      showMessage(handled ? "Команда: старт" : "Сейчас нет таймера для старта");
+      playVoiceCue(handled ? "success" : "error");
       setArmedState(false);
       return;
     }
@@ -182,11 +196,11 @@ export function VoiceAssistant() {
     }
 
     if (!armedRef.current) {
-      if (text.includes("помощник")) {
+      if (text.includes("помощник") || text.includes("асистент")) {
         setArmedState(true);
         showMessage("Слушаю команду");
         playVoiceCue("wake");
-        const commandText = text.replace("помощник", "").trim();
+        const commandText = text.replace("помощник", "").replace("асистент", "").trim();
         if (commandText) handleCommand(commandText);
       }
       return;

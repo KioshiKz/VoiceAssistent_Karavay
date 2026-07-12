@@ -283,6 +283,16 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     setError(null);
   }, [currentStepKey, rememberConfirmedPhrase]);
 
+  const stopTimer = useCallback(() => {
+    if (!activeTimer) return false;
+    setActiveTimer(null);
+    setError(null);
+    return true;
+  }, [activeTimer, setActiveTimer]);
+
+  const canAdvance = !!plan && !advancing && plan.status !== "completed" && !timerBlocked && !phraseBlocked;
+  const canRewind = !!plan && !advancing && plan.current_step_index > 0;
+
   const advance = useCallback(async () => {
     if (!plan || advancing || plan.status === "completed") return;
     if (timerBlocked) {
@@ -321,11 +331,26 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
 
   useEffect(() => {
     function onVoiceCommand(event: Event) {
-      const command = (event as CustomEvent<{ command: string }>).detail?.command;
-      if (command === "advance") void advance();
-      if (command === "rewind") void rewind();
-      if (command === "start") startTimer();
-      if (command === "fullscreen") onFullscreenChange?.(true);
+      const custom = event as CustomEvent<{ command: string }>;
+      const command = custom.detail?.command;
+      if (command === "advance" && canAdvance) {
+        void advance();
+        custom.preventDefault();
+      }
+      if (command === "rewind" && canRewind) {
+        void rewind();
+        custom.preventDefault();
+      }
+      if (command === "start" && startTimer()) {
+        custom.preventDefault();
+      }
+      if (command === "stop" && stopTimer()) {
+        custom.preventDefault();
+      }
+      if (command === "fullscreen" && onFullscreenChange) {
+        onFullscreenChange(true);
+        custom.preventDefault();
+      }
     }
 
     function onVoiceTranscript(event: Event) {
@@ -349,6 +374,8 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     };
   }, [
     advance,
+    canAdvance,
+    canRewind,
     confirmPhrase,
     currentStep,
     currentStepKey,
@@ -357,6 +384,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     onFullscreenChange,
     rewind,
     startTimer,
+    stopTimer,
   ]);
 
   if (!orderLineId) {
