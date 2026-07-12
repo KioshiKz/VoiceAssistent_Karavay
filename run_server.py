@@ -264,7 +264,10 @@ def main() -> int:
             "frontend",
             [npm, "run", "dev", "--", "--host", "127.0.0.1", "--port", str(frontend_port)],
             FRONTEND_DIR,
-            extra_env={"VITE_API_BASE_URL": f"http://127.0.0.1:{backend_port}/api"},
+            extra_env={
+                "VITE_API_BASE_URL": "/api",
+                "VITE_PROXY_API_TARGET": f"http://127.0.0.1:{backend_port}",
+            },
         ),
     ]
 

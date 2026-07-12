@@ -73,6 +73,26 @@ async def _role_visibility_ahead(db: AsyncSession, user: User) -> int | None:
     return max(value for value in values if value is not None)
 
 
+def _apply_visibility_limit(lines: list[OrderLine], visibility_limit: int | None) -> list[OrderLine]:
+    if visibility_limit is None:
+        return lines
+    if visibility_limit <= 0:
+        return []
+
+    visible: list[OrderLine] = []
+    active_count = 0
+    for line in lines:
+        if line.status == "cancelled":
+            continue
+        if line.status == "completed":
+            visible.append(line)
+            continue
+        if active_count < visibility_limit:
+            visible.append(line)
+            active_count += 1
+    return visible
+
+
 async def _user_names(db: AsyncSession, user_ids: set[uuid.UUID | None]) -> dict[uuid.UUID, str]:
     ids = [user_id for user_id in user_ids if user_id is not None]
     if not ids:
@@ -241,8 +261,7 @@ async def current_order(
     lines = list(lines_result.scalars().all())
 
     visibility_limit = await _role_visibility_ahead(db, user)
-    if visibility_limit is not None:
-        lines = [line for line in lines if line.status != "cancelled"][:visibility_limit]
+    lines = _apply_visibility_limit(lines, visibility_limit)
 
     names = await _user_names(db, {line.cancelled_by for line in lines} | {line.last_advanced_by for line in lines})
     return CurrentOrderOut(

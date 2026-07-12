@@ -157,13 +157,13 @@ export function VoiceAssistant() {
       return;
     }
     if (emitVoiceTranscript(text)) {
-      showMessage("Кодовая фраза принята");
+      showMessage("Команда принята");
       playVoiceCue("success");
       setArmedState(false);
       return;
     }
 
-    showMessage("Не верная команда");
+    showMessage("Неверная команда");
     playVoiceCue("error");
   }, [navigate, setArmedState, showMessage]);
 

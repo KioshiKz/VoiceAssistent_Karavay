@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.event_template import EventTemplate
 from app.models.ingredient import Ingredient
+from app.models.order import OrderLine
 from app.models.product import Product
 from app.models.recipe_step import RecipeStep
 
@@ -26,6 +27,10 @@ COMMAND_PHRASES = [
     "старт",
     "полный экран",
     "на полный экран",
+    "следующая заявка",
+    "следущая заявка",
+    "предыдущая заявка",
+    "заявка",
 ]
 
 
@@ -55,6 +60,19 @@ async def voice_grammar(db: AsyncSession = Depends(get_db)):
         result = await db.execute(select(model.name).where(model.is_active.is_(True)))
         for (name,) in result.all():
             _add_phrase(phrases, name)
+
+    order_lines_result = await db.execute(
+        select(OrderLine.product_name_raw, OrderLine.quantity, OrderLine.due_time)
+        .where(OrderLine.status != "cancelled")
+        .order_by(OrderLine.created_at.desc())
+        .limit(300)
+    )
+    for product_name, quantity, due_time in order_lines_result.all():
+        _add_phrase(phrases, product_name)
+        _add_phrase(phrases, f"заявка {product_name}")
+        _add_phrase(phrases, f"заявка {product_name} {quantity}")
+        _add_phrase(phrases, f"заявка {due_time:%H %M}")
+        _add_phrase(phrases, f"заявка {due_time:%H:%M}")
 
     steps_result = await db.execute(select(RecipeStep.event_params).where(RecipeStep.event_params.is_not(None)))
     for (params,) in steps_result.all():

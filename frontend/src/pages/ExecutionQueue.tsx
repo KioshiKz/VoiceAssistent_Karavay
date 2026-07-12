@@ -13,6 +13,167 @@ function statusLabel(status: OrderLineOut["status"]) {
   return "отменена";
 }
 
+const NUMBER_WORD_VALUES: Record<string, number> = {
+  ноль: 0,
+  один: 1,
+  одна: 1,
+  два: 2,
+  две: 2,
+  три: 3,
+  четыре: 4,
+  пять: 5,
+  шесть: 6,
+  семь: 7,
+  восемь: 8,
+  девять: 9,
+  десять: 10,
+  одиннадцать: 11,
+  двенадцать: 12,
+  тринадцать: 13,
+  четырнадцать: 14,
+  пятнадцать: 15,
+  шестнадцать: 16,
+  семнадцать: 17,
+  восемнадцать: 18,
+  девятнадцать: 19,
+  двадцать: 20,
+  тридцать: 30,
+  сорок: 40,
+  пятьдесят: 50,
+  шестьдесят: 60,
+  семьдесят: 70,
+  восемьдесят: 80,
+  девяносто: 90,
+  сто: 100,
+  двести: 200,
+  триста: 300,
+  четыреста: 400,
+  пятьсот: 500,
+  шестьсот: 600,
+  семьсот: 700,
+  восемьсот: 800,
+  девятьсот: 900,
+};
+
+const PRODUCT_QUERY_STOP_WORDS = new Set(["заявка", "заявку", "количество", "штук", "штуки", "штука", "шт"]);
+const TIME_QUERY_STOP_WORDS = new Set([
+  "заявка",
+  "заявку",
+  "время",
+  "заявки",
+  "в",
+  "на",
+  "к",
+  "час",
+  "часа",
+  "часов",
+  "минут",
+  "минуты",
+  "минута",
+]);
+
+function normalizeVoiceText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}:.\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeWordText(value: string) {
+  return normalizeVoiceText(value).replace(/[:.-]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function tokenizeWords(value: string) {
+  const normalized = normalizeWordText(value);
+  return normalized ? normalized.split(" ") : [];
+}
+
+function parseRussianNumberWords(words: string[]) {
+  if (!words.length) return null;
+
+  let value = 0;
+  for (const word of words) {
+    const next = NUMBER_WORD_VALUES[word];
+    if (next === undefined) return null;
+    value += next;
+  }
+  return value;
+}
+
+function formatTimeValue(hour: number, minute: number) {
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parseTimeQuery(query: string) {
+  const normalized = normalizeVoiceText(query);
+  const direct = normalized.match(/(?:^|\s)([01]?\d|2[0-3])\s*[:.]\s*([0-5]\d)(?:\s|$)/);
+  if (direct) return formatTimeValue(Number(direct[1]), Number(direct[2]));
+
+  const tokens = tokenizeWords(query).filter((token) => !TIME_QUERY_STOP_WORDS.has(token));
+  if (!tokens.length) return null;
+
+  if (tokens.every((token) => /^\d+$/.test(token))) {
+    if (tokens.length === 1) {
+      const raw = tokens[0];
+      if (raw.length === 3 || raw.length === 4) {
+        return formatTimeValue(Number(raw.slice(0, -2)), Number(raw.slice(-2)));
+      }
+      return formatTimeValue(Number(raw), 0);
+    }
+    if (tokens.length === 2) return formatTimeValue(Number(tokens[0]), Number(tokens[1]));
+  }
+
+  for (let split = 1; split < tokens.length; split += 1) {
+    const hour = parseRussianNumberWords(tokens.slice(0, split));
+    const minute = parseRussianNumberWords(tokens.slice(split));
+    const parsed = hour === null || minute === null ? null : formatTimeValue(hour, minute);
+    if (parsed) return parsed;
+  }
+
+  const hour = parseRussianNumberWords(tokens);
+  return hour === null ? null : formatTimeValue(hour, 0);
+}
+
+function parseQuantityQuery(query: string) {
+  let tokens = tokenizeWords(query);
+  while (tokens.length && PRODUCT_QUERY_STOP_WORDS.has(tokens[tokens.length - 1])) {
+    tokens = tokens.slice(0, -1);
+  }
+  if (!tokens.length) return null;
+
+  const buildResult = (quantity: number, quantityTokenCount: number) => {
+    if (quantity <= 0) return null;
+    const productTokens = tokens
+      .slice(0, tokens.length - quantityTokenCount)
+      .filter((token) => !PRODUCT_QUERY_STOP_WORDS.has(token));
+    if (!productTokens.length) return null;
+    return { productQuery: productTokens.join(" "), quantity };
+  };
+
+  const lastToken = tokens[tokens.length - 1];
+  if (/^\d+$/.test(lastToken)) return buildResult(Number(lastToken), 1);
+
+  for (let length = Math.min(4, tokens.length); length >= 1; length -= 1) {
+    const quantity = parseRussianNumberWords(tokens.slice(tokens.length - length));
+    if (quantity !== null) {
+      const result = buildResult(quantity, length);
+      if (result) return result;
+    }
+  }
+
+  return null;
+}
+
+function productMatchesQuery(line: OrderLineOut, productQuery: string) {
+  const productText = normalizeWordText(line.product_name_raw);
+  return productQuery.split(" ").every((token) => productText.includes(token));
+}
+
 export function ExecutionQueue() {
   const [order, setOrder] = useState<CurrentOrderOut | null>(null);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
@@ -69,15 +230,95 @@ export function ExecutionQueue() {
     return [...map.entries()];
   }, [order]);
 
+  const selectableLines = useMemo(
+    () => (order?.lines ?? []).filter((line) => line.match_status === "matched" && line.status !== "cancelled"),
+    [order],
+  );
+
   useEffect(() => {
-    if (!order?.lines.length) {
+    if (!selectableLines.length) {
       setSelectedLineId(null);
       return;
     }
-    if (selectedLineId && order.lines.some((line) => line.id === selectedLineId)) return;
-    const firstExecutable = order.lines.find((line) => line.match_status === "matched" && line.status !== "cancelled");
-    setSelectedLineId(firstExecutable?.id ?? null);
-  }, [order, selectedLineId]);
+    if (selectedLineId && selectableLines.some((line) => line.id === selectedLineId)) return;
+    setSelectedLineId(selectableLines[0].id);
+  }, [selectableLines, selectedLineId]);
+
+  const selectRelativeLine = useCallback(
+    (offset: number) => {
+      if (!selectableLines.length) return false;
+      const currentIndex = selectableLines.findIndex((line) => line.id === selectedLineId);
+      const nextIndex =
+        currentIndex === -1
+          ? offset > 0
+            ? 0
+            : selectableLines.length - 1
+          : (currentIndex + offset + selectableLines.length) % selectableLines.length;
+      setSelectedLineId(selectableLines[nextIndex].id);
+      return true;
+    },
+    [selectableLines, selectedLineId],
+  );
+
+  const selectFirstMatchingLine = useCallback(
+    (predicate: (line: OrderLineOut) => boolean) => {
+      if (!selectableLines.length) return false;
+      const currentIndex = selectableLines.findIndex((line) => line.id === selectedLineId);
+      const searchOrder =
+        currentIndex === -1
+          ? selectableLines
+          : [...selectableLines.slice(currentIndex + 1), ...selectableLines.slice(0, currentIndex + 1)];
+      const match = searchOrder.find(predicate);
+      if (!match) return false;
+      setSelectedLineId(match.id);
+      return true;
+    },
+    [selectableLines, selectedLineId],
+  );
+
+  const handleOrderVoiceTranscript = useCallback(
+    (rawText: string) => {
+      const text = normalizeVoiceText(rawText);
+      if (!text) return false;
+
+      if (text.includes("следующая заявка") || text.includes("следущая заявка")) {
+        return selectRelativeLine(1);
+      }
+      if (text.includes("предыдущая заявка") || text.includes("прошлая заявка")) {
+        return selectRelativeLine(-1);
+      }
+
+      const markerIndex = text.indexOf("заявка");
+      if (markerIndex === -1) return false;
+
+      const query = text.slice(markerIndex + "заявка".length).trim();
+      if (!query) return false;
+
+      const time = parseTimeQuery(query);
+      if (time && selectFirstMatchingLine((line) => line.due_time.slice(0, 5) === time)) {
+        return true;
+      }
+
+      const quantityQuery = parseQuantityQuery(query);
+      if (!quantityQuery) return false;
+
+      return selectFirstMatchingLine(
+        (line) => line.quantity === quantityQuery.quantity && productMatchesQuery(line, quantityQuery.productQuery),
+      );
+    },
+    [selectFirstMatchingLine, selectRelativeLine],
+  );
+
+  useEffect(() => {
+    function onVoiceTranscript(event: Event) {
+      if (event.defaultPrevented) return;
+      const text = (event as CustomEvent<{ text: string }>).detail?.text ?? "";
+      if (handleOrderVoiceTranscript(text)) event.preventDefault();
+    }
+
+    window.addEventListener("voice-transcript", onVoiceTranscript);
+    return () => window.removeEventListener("voice-transcript", onVoiceTranscript);
+  }, [handleOrderVoiceTranscript]);
 
   if (fullscreen && order && selectedLineId) {
     return (
