@@ -199,7 +199,7 @@ function extractDirectTime(query: string): { time: string; remainder: string } |
 }
 
 function announceLine(time: string, line: OrderLineOut) {
-  void speak(`Заявка на ${time.replace(":", " ")}: ${line.product_name_raw}, ${line.quantity} штук.`);
+  void speak(`Заявка на ${time.replace(":", " ")}: ${line.product_name_raw}, ${line.quantity} шт.`);
 }
 
 export function ExecutionQueue() {

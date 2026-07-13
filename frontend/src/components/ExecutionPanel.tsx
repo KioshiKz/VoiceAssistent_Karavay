@@ -129,22 +129,22 @@ function playTimerCue(cue: TimerCue) {
 }
 
 function stepSpeech(step: ExecutionPlanStepOut, stepNumber: number, totalSteps: number) {
-  const base = `Шаг ${stepNumber} из ${totalSteps}.`;
+  const base = `Шаг ${stepNumber} из ${totalSteps}`;
   if (step.step_type === "ingredient") {
-    return `${base} Добавьте ${step.quantity_display ?? ""}: ${step.ingredient_name_snapshot ?? "ингредиент"}.`;
+    return `${base}, ${step.ingredient_name_snapshot ?? "ингредиент"}, ${step.quantity_display ?? ""}.`;
   }
   if (step.step_type === "ingredient_event") {
-    return `${base} Постепенно добавьте ${step.quantity_display ?? ""}: ${
-      step.ingredient_name_snapshot ?? "ингредиент"
+    return `${base}, ${step.ingredient_name_snapshot ?? "ингредиент"}, постепенно ${
+      step.quantity_display ?? ""
     }. ${stepDetails(step)}.`;
   }
   if (step.event_type_snapshot === "timer") {
-    return `${base} ${step.event_name_snapshot ?? "Событие"}. Для запуска таймера скажите ${timerStartPhrase(step)}.`;
+    return `${base}. ${step.event_name_snapshot ?? "Событие"}. Для запуска таймера скажите ${timerStartPhrase(step)}.`;
   }
   if (step.event_type_snapshot === "phrase_confirmation") {
-    return `${base} ${step.event_name_snapshot ?? "Событие"}. Скажите кодовую фразу ${confirmationPhrase(step)}.`;
+    return `${base}. ${step.event_name_snapshot ?? "Событие"}. Скажите кодовую фразу ${confirmationPhrase(step)}.`;
   }
-  return `${base} ${stepTitle(step)}.`;
+  return `${base}. ${stepTitle(step)}.`;
 }
 
 export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenChange }: ExecutionPanelProps) {
