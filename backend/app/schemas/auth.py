@@ -12,8 +12,13 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: str
     full_name: str
+    voice_assistant_enabled: bool
 
     model_config = {"from_attributes": True}
+
+
+class VoiceSettingsUpdate(BaseModel):
+    voice_assistant_enabled: bool
 
 
 class TokenResponse(BaseModel):

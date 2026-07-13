@@ -8,8 +8,10 @@ import type {
   FolderOut,
   IngredientOut,
   MePermissions,
+  OrderLineHistoryEntryOut,
   OrderLineHistoryOut,
   OrderLineOut,
+  OrderSummaryOut,
   OrderUploadOut,
   PermissionDef,
   ProductDetailOut,
@@ -31,6 +33,8 @@ export const authApi = {
   logout: () => apiClient.post("/auth/logout").then((r) => r.data),
   me: () => apiClient.get<UserOut>("/me").then((r) => r.data),
   mePermissions: () => apiClient.get<MePermissions>("/me/permissions").then((r) => r.data),
+  updateVoiceSettings: (enabled: boolean) =>
+    apiClient.patch<UserOut>("/me/voice-settings", { voice_assistant_enabled: enabled }).then((r) => r.data),
 };
 
 export const tabsApi = {
@@ -39,6 +43,8 @@ export const tabsApi = {
 
 export const voiceApi = {
   events: (after = 0) => apiClient.get<VoiceEventOut[]>("/voice/events", { params: { after } }).then((r) => r.data),
+  speak: (text: string) =>
+    apiClient.post("/voice/speak", { text }, { responseType: "blob" }).then((r) => r.data as Blob),
 };
 
 export const rolesApi = {
@@ -61,8 +67,10 @@ export const usersApi = {
   list: () => apiClient.get<UserListOut[]>("/users").then((r) => r.data),
   create: (payload: { email: string; password: string; full_name: string; is_active?: boolean }) =>
     apiClient.post<UserListOut>("/users", payload).then((r) => r.data),
-  update: (id: string, payload: Partial<{ full_name: string; is_active: boolean; password: string }>) =>
-    apiClient.patch<UserListOut>(`/users/${id}`, payload).then((r) => r.data),
+  update: (
+    id: string,
+    payload: Partial<{ full_name: string; is_active: boolean; password: string; voice_assistant_enabled: boolean }>,
+  ) => apiClient.patch<UserListOut>(`/users/${id}`, payload).then((r) => r.data),
   setRoles: (id: string, roleIds: string[]) =>
     apiClient.put<UserListOut>(`/users/${id}/roles`, { role_ids: roleIds }).then((r) => r.data),
 };
@@ -148,14 +156,28 @@ export const ordersApi = {
       .then((r) => r.data);
   },
   current: () => apiClient.get<CurrentOrderOut>("/orders/current").then((r) => r.data),
+  list: () => apiClient.get<OrderSummaryOut[]>("/orders").then((r) => r.data),
+  getOrder: (orderId: string) => apiClient.get<CurrentOrderOut>(`/orders/${orderId}`).then((r) => r.data),
+  createLine: (payload: {
+    order_id: string;
+    product_name_raw: string;
+    quantity: number;
+    due_time: string;
+    matched_product_id?: string | null;
+  }) => apiClient.post<OrderLineOut>("/order-lines", payload).then((r) => r.data),
+  deleteLine: (lineId: string) => apiClient.delete(`/order-lines/${lineId}`).then((r) => r.data),
   match: (lineId: string, productId: string) =>
     apiClient.patch<OrderLineOut>(`/order-lines/${lineId}/match`, { product_id: productId }).then((r) => r.data),
-  updateLine: (lineId: string, payload: Partial<{ quantity: number; due_time: string; matched_product_id: string | null }>) =>
-    apiClient.patch<OrderLineOut>(`/order-lines/${lineId}`, payload).then((r) => r.data),
+  updateLine: (
+    lineId: string,
+    payload: Partial<{ product_name_raw: string; quantity: number; due_time: string; matched_product_id: string | null }>,
+  ) => apiClient.patch<OrderLineOut>(`/order-lines/${lineId}`, payload).then((r) => r.data),
   cancelLine: (lineId: string, reason: string) =>
     apiClient.post<OrderLineOut>(`/order-lines/${lineId}/cancel`, { reason }).then((r) => r.data),
   history: (lineId: string) =>
     apiClient.get<OrderLineHistoryOut[]>(`/order-lines/${lineId}/history`).then((r) => r.data),
+  historyAll: (params: { actor_id?: string; order_id?: string; event_type?: string; limit?: number; offset?: number }) =>
+    apiClient.get<OrderLineHistoryEntryOut[]>("/order-line-history", { params }).then((r) => r.data),
 };
 
 export const executionApi = {

@@ -1,16 +1,19 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.event_template import EventTemplate
 from app.models.ingredient import Ingredient
 from app.models.order import OrderLine
 from app.models.product import Product
 from app.models.recipe_step import RecipeStep
+from app.models.user import User
+from app.services import tts_service
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 VOICE_EVENT_LIMIT = 200
@@ -39,12 +42,18 @@ COMMAND_PHRASES = [
     "следущая заявка",
     "предыдущая заявка",
     "заявка",
+    "повтори",
+    "повторить",
 ]
 
 
 class VoiceTranscriptIn(BaseModel):
     text: str = Field(min_length=1)
     source: str = "vosk"
+
+
+class VoiceSpeakIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
 
 
 class VoiceEventOut(BaseModel):
@@ -81,6 +90,11 @@ async def voice_grammar(db: AsyncSession = Depends(get_db)):
         _add_phrase(phrases, f"заявка {product_name} {quantity}")
         _add_phrase(phrases, f"заявка {due_time:%H %M}")
         _add_phrase(phrases, f"заявка {due_time:%H:%M}")
+        # Combined "продукт + время" phrase, mirroring the "продукт + количество"
+        # one above — without it the offline Vosk grammar never saw this exact
+        # word sequence for any real order line.
+        _add_phrase(phrases, f"заявка {product_name} {due_time:%H %M}")
+        _add_phrase(phrases, f"заявка {product_name} {due_time:%H:%M}")
 
     steps_result = await db.execute(select(RecipeStep.event_params).where(RecipeStep.event_params.is_not(None)))
     for (params,) in steps_result.all():
@@ -123,3 +137,11 @@ async def push_voice_transcript(payload: VoiceTranscriptIn):
 @router.get("/events", response_model=list[VoiceEventOut])
 async def voice_events(after: int = 0):
     return [event for event in VOICE_EVENTS if int(event["id"]) > after]
+
+
+@router.post("/speak")
+async def speak(payload: VoiceSpeakIn, user: User = Depends(get_current_user)):
+    if not user.voice_assistant_enabled:
+        raise HTTPException(status_code=409, detail="voice_assistant_disabled")
+    wav_bytes = await tts_service.synthesize(payload.text)
+    return Response(content=wav_bytes, media_type="audio/wav")

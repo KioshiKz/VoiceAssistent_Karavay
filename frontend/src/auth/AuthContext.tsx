@@ -12,6 +12,7 @@ interface AuthContextValue {
   hasTabView: (tabKey: string) => boolean;
   hasTabEdit: (tabKey: string) => boolean;
   hasGlobal: (code: string) => boolean;
+  updateVoiceAssistantEnabled: (enabled: boolean) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -58,9 +59,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [permissions],
   );
 
+  const updateVoiceAssistantEnabled = useCallback(async (enabled: boolean) => {
+    const updated = await authApi.updateVoiceSettings(enabled);
+    setUser(updated);
+  }, []);
+
   const value = useMemo(
-    () => ({ user, permissions, isLoading, login, logout, hasTabView, hasTabEdit, hasGlobal }),
-    [user, permissions, isLoading, login, logout, hasTabView, hasTabEdit, hasGlobal],
+    () => ({
+      user,
+      permissions,
+      isLoading,
+      login,
+      logout,
+      hasTabView,
+      hasTabEdit,
+      hasGlobal,
+      updateVoiceAssistantEnabled,
+    }),
+    [user, permissions, isLoading, login, logout, hasTabView, hasTabEdit, hasGlobal, updateVoiceAssistantEnabled],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import {
+  Activity,
+  Archive,
   CalendarClock,
   ClipboardList,
   Files,
@@ -8,6 +10,7 @@ import {
   Home,
   LogOut,
   Mic,
+  MicOff,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -62,6 +65,18 @@ const NAV_ITEMS = [
     canShow: (hasTabView: (key: string) => boolean) => hasTabView("current_order"),
   },
   {
+    to: "/orders",
+    label: "Все заявки",
+    icon: Archive,
+    canShow: (hasTabView: (key: string) => boolean) => hasTabView("orders_list"),
+  },
+  {
+    to: "/monitoring",
+    label: "Мониторинг",
+    icon: Activity,
+    canShow: (hasTabView: (key: string) => boolean) => hasTabView("order_monitoring"),
+  },
+  {
     to: "/execution",
     label: "Выполнение",
     icon: Mic,
@@ -71,8 +86,9 @@ const NAV_ITEMS = [
 ];
 
 export function ConsoleShell({ title, subtitle, children, className, actions }: ConsoleShellProps) {
-  const { user, hasTabView, hasGlobal, logout } = useAuth();
+  const { user, hasTabView, hasGlobal, logout, updateVoiceAssistantEnabled } = useAuth();
   const visibleItems = NAV_ITEMS.filter((item) => item.canShow(hasTabView, hasGlobal));
+  const voiceEnabled = user?.voice_assistant_enabled !== false;
 
   return (
     <div className="console-shell">
@@ -113,6 +129,14 @@ export function ConsoleShell({ title, subtitle, children, className, actions }: 
 
         <div className="console-user">
           <span>{user?.full_name ?? "Пользователь"}</span>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => void updateVoiceAssistantEnabled(!voiceEnabled)}
+            title={voiceEnabled ? "Выключить голосового помощника" : "Включить голосового помощника"}
+          >
+            {voiceEnabled ? <Mic size={18} /> : <MicOff size={18} />}
+          </button>
           <button className="icon-button" type="button" onClick={() => void logout()} title="Выйти">
             <LogOut size={18} />
           </button>

@@ -14,6 +14,7 @@ class UserUpdate(BaseModel):
     full_name: str | None = None
     is_active: bool | None = None
     password: str | None = None
+    voice_assistant_enabled: bool | None = None
 
 
 class UserListOut(BaseModel):
@@ -21,6 +22,7 @@ class UserListOut(BaseModel):
     email: str
     full_name: str
     is_active: bool
+    voice_assistant_enabled: bool
     role_names: list[str]
 
 

@@ -2,6 +2,7 @@ export interface UserOut {
   id: string;
   email: string;
   full_name: string;
+  voice_assistant_enabled: boolean;
 }
 
 export interface TabPermission {
@@ -59,6 +60,7 @@ export interface UserListOut {
   email: string;
   full_name: string;
   is_active: boolean;
+  voice_assistant_enabled: boolean;
   role_names: string[];
 }
 
@@ -210,7 +212,7 @@ export interface CurrentOrderOut {
 
 export interface OrderLineHistoryOut {
   id: string;
-  order_line_id: string;
+  order_line_id: string | null;
   actor_id: string | null;
   actor_name: string | null;
   event_type: string;
@@ -218,6 +220,24 @@ export interface OrderLineHistoryOut {
   new_value: Record<string, unknown> | null;
   note: string | null;
   created_at: string;
+}
+
+export interface OrderLineHistoryEntryOut extends OrderLineHistoryOut {
+  order_id: string | null;
+  product_name_raw: string | null;
+  execution_date: string | null;
+}
+
+export interface OrderSummaryOut {
+  id: string;
+  execution_date: string;
+  source_filename: string;
+  uploaded_at: string;
+  uploaded_by_name: string | null;
+  workshop_folder_id: string | null;
+  workshop_folder_name: string | null;
+  total_lines: number;
+  active_lines: number;
 }
 
 export interface ExecutionPlanStepOut {

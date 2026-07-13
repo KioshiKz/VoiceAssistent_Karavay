@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { executionApi } from "../api/endpoints";
 import type { ExecutionPlanOut, ExecutionPlanStepOut } from "../api/types";
+import { speak } from "../utils/speech";
 
 const ACTIVE_TIMER_KEY = "karavay.activeExecutionTimer";
 const COMPLETED_TIMERS_KEY = "karavay.completedExecutionTimers";
@@ -105,6 +106,7 @@ function playTimerCue(cue: TimerCue) {
 
   try {
     const context = new AudioContextCtor();
+    if (context.state === "suspended") void context.resume();
     let offset = 0;
     for (const [frequency, duration, volume] of sequences[cue]) {
       const start = context.currentTime + offset;
@@ -123,20 +125,6 @@ function playTimerCue(cue: TimerCue) {
     window.setTimeout(() => void context.close(), Math.ceil((offset + 0.1) * 1000));
   } catch {
     // Browser audio may be blocked until the page receives a user gesture.
-  }
-}
-
-function speakText(text: string) {
-  if (!("speechSynthesis" in window)) return;
-  try {
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "ru-RU";
-    utterance.rate = 0.95;
-    utterance.pitch = 1;
-    window.speechSynthesis.speak(utterance);
-  } catch {
-    // Speech synthesis is optional for this interface.
   }
 }
 
@@ -170,6 +158,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
   const [confirmedPhrases, setConfirmedPhrases] = useState<string[]>(() => readJson(CONFIRMED_PHRASES_KEY, []));
   const announcedStepKeyRef = useRef<string | null>(null);
   const lastTickRef = useRef<number | null>(null);
+  const lastSpokenTextRef = useRef<string>("");
 
   useEffect(() => {
     announcedStepKeyRef.current = null;
@@ -243,7 +232,9 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     if (!plan || !currentStep || !currentStepKey || plan.status === "completed") return;
     if (announcedStepKeyRef.current === currentStepKey) return;
     announcedStepKeyRef.current = currentStepKey;
-    speakText(stepSpeech(currentStep, currentStepNumber, totalSteps));
+    const text = stepSpeech(currentStep, currentStepNumber, totalSteps);
+    lastSpokenTextRef.current = text;
+    void speak(text);
   }, [currentStep, currentStepKey, currentStepNumber, plan, totalSteps]);
 
   useEffect(() => {
@@ -351,6 +342,20 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
         onFullscreenChange(true);
         custom.preventDefault();
       }
+      if (command === "repeat" && lastSpokenTextRef.current) {
+        void speak(lastSpokenTextRef.current);
+        custom.preventDefault();
+      }
+      if (command === "announce" && plan) {
+        const text =
+          plan.status === "completed" || !currentStep || !currentStepKey
+            ? "Все шаги выполнены."
+            : stepSpeech(currentStep, currentStepNumber, totalSteps);
+        lastSpokenTextRef.current = text;
+        announcedStepKeyRef.current = currentStepKey;
+        void speak(text);
+        custom.preventDefault();
+      }
     }
 
     function onVoiceTranscript(event: Event) {
@@ -379,12 +384,15 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     confirmPhrase,
     currentStep,
     currentStepKey,
+    currentStepNumber,
     isPhraseStep,
     isTimerStep,
     onFullscreenChange,
+    plan,
     rewind,
     startTimer,
     stopTimer,
+    totalSteps,
   ]);
 
   if (!orderLineId) {

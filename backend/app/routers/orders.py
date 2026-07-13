@@ -16,10 +16,13 @@ from app.models.user import User
 from app.schemas.order import (
     CurrentOrderOut,
     OrderLineCancel,
+    OrderLineCreate,
+    OrderLineHistoryEntryOut,
     OrderLineHistoryOut,
     OrderLineMatch,
     OrderLineOut,
     OrderLineUpdate,
+    OrderSummaryOut,
     OrderUploadOut,
 )
 from app.services import folder_service, permission_service
@@ -40,8 +43,33 @@ async def _can_view_order_queue(db: AsyncSession, user: User) -> bool:
     return (
         await permission_service.has_tab_permission(db, user, "tab.view", "current_order")
         or await permission_service.has_tab_permission(db, user, "tab.view", "execution_queue")
+        or await permission_service.has_tab_permission(db, user, "tab.view", "orders_list")
         or await permission_service.has_global_permission(db, user, "order.execute")
     )
+
+
+async def _can_edit_orders(db: AsyncSession, user: User) -> bool:
+    return await permission_service.has_tab_permission(
+        db, user, "tab.edit", "current_order"
+    ) or await permission_service.has_tab_permission(db, user, "tab.edit", "orders_list")
+
+
+def require_order_view():
+    async def checker(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:
+        if not await _can_view_order_queue(db, user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="permission_denied")
+        return user
+
+    return checker
+
+
+def require_order_edit():
+    async def checker(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:
+        if not await _can_edit_orders(db, user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="permission_denied")
+        return user
+
+    return checker
 
 
 async def _visible_workshop_ids(db: AsyncSession, user: User) -> set[uuid.UUID] | None:
@@ -111,6 +139,8 @@ def _history(
 ) -> OrderLineHistory:
     return OrderLineHistory(
         order_line_id=line.id,
+        order_id=line.order_id,
+        product_name_raw=line.product_name_raw,
         actor_id=actor_id,
         event_type=event_type,
         old_value=old_value,
@@ -121,6 +151,7 @@ def _history(
 
 def _serialize_line(line: OrderLine) -> dict:
     return {
+        "product_name_raw": line.product_name_raw,
         "quantity": line.quantity,
         "due_time": line.due_time.isoformat(),
         "matched_product_id": str(line.matched_product_id) if line.matched_product_id else None,
@@ -271,10 +302,152 @@ async def current_order(
     )
 
 
+@router.get("/orders", response_model=list[OrderSummaryOut], dependencies=[Depends(require_order_view())])
+async def list_orders(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    visible_workshops = await _visible_workshop_ids(db, user)
+    orders_stmt = select(Order).options(selectinload(Order.workshop_folder)).order_by(
+        Order.execution_date.desc(), Order.uploaded_at.desc()
+    )
+    if visible_workshops is not None:
+        if visible_workshops:
+            orders_stmt = orders_stmt.where(
+                (Order.workshop_folder_id.is_(None)) | (Order.workshop_folder_id.in_(visible_workshops))
+            )
+        else:
+            orders_stmt = orders_stmt.where(Order.workshop_folder_id.is_(None))
+
+    orders = list((await db.execute(orders_stmt)).scalars().all())
+    order_ids = [order.id for order in orders]
+
+    counts: dict[uuid.UUID, tuple[int, int]] = {}
+    if order_ids:
+        counts_result = await db.execute(
+            select(
+                OrderLine.order_id,
+                func.count(OrderLine.id),
+                func.count(OrderLine.id).filter(OrderLine.status != "cancelled"),
+            )
+            .where(OrderLine.order_id.in_(order_ids))
+            .group_by(OrderLine.order_id)
+        )
+        counts = {row[0]: (row[1], row[2]) for row in counts_result.all()}
+
+    names = await _user_names(db, {order.uploaded_by for order in orders})
+
+    return [
+        OrderSummaryOut(
+            id=order.id,
+            execution_date=order.execution_date,
+            source_filename=order.source_filename,
+            uploaded_at=order.uploaded_at,
+            uploaded_by_name=names.get(order.uploaded_by) if order.uploaded_by else None,
+            workshop_folder_id=order.workshop_folder_id,
+            workshop_folder_name=order.workshop_folder.name if order.workshop_folder else None,
+            total_lines=counts.get(order.id, (0, 0))[0],
+            active_lines=counts.get(order.id, (0, 0))[1],
+        )
+        for order in orders
+    ]
+
+
+@router.get("/orders/{order_id}", response_model=CurrentOrderOut, dependencies=[Depends(require_order_view())])
+async def get_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    order = await db.get(Order, order_id, options=[selectinload(Order.workshop_folder)])
+    if order is None:
+        raise HTTPException(404, detail="order_not_found")
+
+    if order.workshop_folder_id is not None:
+        visible_workshops = await _visible_workshop_ids(db, user)
+        if visible_workshops is not None and order.workshop_folder_id not in visible_workshops:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="permission_denied")
+
+    lines_result = await db.execute(
+        select(OrderLine)
+        .where(OrderLine.order_id == order_id)
+        .options(selectinload(OrderLine.order).selectinload(Order.workshop_folder))
+        .order_by(OrderLine.due_time, OrderLine.created_at)
+    )
+    lines = list(lines_result.scalars().all())
+    names = await _user_names(db, {line.cancelled_by for line in lines} | {line.last_advanced_by for line in lines})
+    return CurrentOrderOut(
+        order_id=order.id,
+        execution_date=order.execution_date,
+        lines=[await _line_to_out(db, line, names) for line in lines],
+    )
+
+
+@router.post(
+    "/order-lines",
+    response_model=OrderLineOut,
+    status_code=201,
+    dependencies=[Depends(require_order_edit())],
+)
+async def create_order_line(
+    payload: OrderLineCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    order = await db.get(Order, payload.order_id)
+    if order is None:
+        raise HTTPException(404, detail="order_not_found")
+
+    if payload.matched_product_id is not None:
+        product = await db.get(Product, payload.matched_product_id)
+        if product is None:
+            raise HTTPException(404, detail="product_not_found")
+    else:
+        product = await _match_product(db, payload.product_name_raw)
+
+    next_group_index = (
+        await db.execute(select(func.coalesce(func.max(OrderLine.row_group_index), 0)).where(OrderLine.order_id == order.id))
+    ).scalar_one() + 1
+
+    line = OrderLine(
+        order_id=order.id,
+        row_group_index=next_group_index,
+        product_name_raw=payload.product_name_raw.strip(),
+        quantity=payload.quantity,
+        due_time=payload.due_time,
+        matched_product_id=product.id if product else None,
+        match_status="matched" if product else "unmatched",
+        status="pending",
+    )
+    db.add(line)
+    await db.flush()
+    db.add(_history(line, user.id, "create", new_value=_serialize_line(line)))
+    await db.commit()
+    await db.refresh(line)
+    return await _line_to_out(db, line)
+
+
+@router.delete(
+    "/order-lines/{line_id}",
+    status_code=204,
+    dependencies=[Depends(require_order_edit())],
+)
+async def delete_order_line(
+    line_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    line = await db.get(OrderLine, line_id)
+    if line is None:
+        raise HTTPException(404, detail="order_line_not_found")
+
+    db.add(_history(line, user.id, "delete", old_value=_serialize_line(line)))
+    await db.flush()
+    await db.delete(line)
+    await db.commit()
+
+
 @router.patch(
     "/order-lines/{line_id}/match",
     response_model=OrderLineOut,
-    dependencies=[Depends(require_permission("tab.edit", tab_key="current_order"))],
+    dependencies=[Depends(require_order_edit())],
 )
 async def match_order_line(
     line_id: uuid.UUID,
@@ -301,7 +474,7 @@ async def match_order_line(
 @router.patch(
     "/order-lines/{line_id}",
     response_model=OrderLineOut,
-    dependencies=[Depends(require_permission("tab.edit", tab_key="current_order"))],
+    dependencies=[Depends(require_order_edit())],
 )
 async def update_order_line(
     line_id: uuid.UUID,
@@ -320,6 +493,8 @@ async def update_order_line(
         return await _line_to_out(db, line)
 
     old_value = _serialize_line(line)
+    if "product_name_raw" in updates:
+        line.product_name_raw = updates["product_name_raw"].strip()
     if "quantity" in updates:
         line.quantity = updates["quantity"]
     if "due_time" in updates:
@@ -345,7 +520,7 @@ async def update_order_line(
 @router.post(
     "/order-lines/{line_id}/cancel",
     response_model=OrderLineOut,
-    dependencies=[Depends(require_permission("tab.edit", tab_key="current_order"))],
+    dependencies=[Depends(require_order_edit())],
 )
 async def cancel_order_line(
     line_id: uuid.UUID,
@@ -382,7 +557,7 @@ async def cancel_order_line(
 @router.get(
     "/order-lines/{line_id}/history",
     response_model=list[OrderLineHistoryOut],
-    dependencies=[Depends(require_permission("tab.view", tab_key="current_order"))],
+    dependencies=[Depends(require_order_view())],
 )
 async def order_line_history(line_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     line = await db.get(OrderLine, line_id)
@@ -407,6 +582,58 @@ async def order_line_history(line_id: uuid.UUID, db: AsyncSession = Depends(get_
             new_value=item.new_value,
             note=item.note,
             created_at=item.created_at,
+        )
+        for item in items
+    ]
+
+
+@router.get(
+    "/order-line-history",
+    response_model=list[OrderLineHistoryEntryOut],
+    dependencies=[Depends(require_order_view())],
+)
+async def list_order_line_history(
+    actor_id: uuid.UUID | None = None,
+    order_id: uuid.UUID | None = None,
+    event_type: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    limit = min(max(limit, 1), 500)
+    offset = max(offset, 0)
+
+    stmt = select(OrderLineHistory).order_by(OrderLineHistory.created_at.desc()).limit(limit).offset(offset)
+    if actor_id is not None:
+        stmt = stmt.where(OrderLineHistory.actor_id == actor_id)
+    if order_id is not None:
+        stmt = stmt.where(OrderLineHistory.order_id == order_id)
+    if event_type is not None:
+        stmt = stmt.where(OrderLineHistory.event_type == event_type)
+
+    items = list((await db.execute(stmt)).scalars().all())
+    names = await _user_names(db, {item.actor_id for item in items})
+
+    order_ids = {item.order_id for item in items if item.order_id is not None}
+    exec_dates: dict[uuid.UUID, datetime.date] = {}
+    if order_ids:
+        dates_result = await db.execute(select(Order.id, Order.execution_date).where(Order.id.in_(order_ids)))
+        exec_dates = {row[0]: row[1] for row in dates_result.all()}
+
+    return [
+        OrderLineHistoryEntryOut(
+            id=item.id,
+            order_line_id=item.order_line_id,
+            actor_id=item.actor_id,
+            actor_name=names.get(item.actor_id) if item.actor_id else None,
+            event_type=item.event_type,
+            old_value=item.old_value,
+            new_value=item.new_value,
+            note=item.note,
+            created_at=item.created_at,
+            order_id=item.order_id,
+            product_name_raw=item.product_name_raw,
+            execution_date=exec_dates.get(item.order_id) if item.order_id else None,
         )
         for item in items
     ]

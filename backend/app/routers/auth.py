@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.permission import AppTab, RolePermission
 from app.models.role import UserRole
 from app.models.user import User
-from app.schemas.auth import LoginRequest, MePermissions, TabPermission, TokenResponse, UserOut
+from app.schemas.auth import LoginRequest, MePermissions, TabPermission, TokenResponse, UserOut, VoiceSettingsUpdate
 from app.services import permission_service
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -48,6 +48,18 @@ async def logout(response: Response):
 
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)):
+    return UserOut.model_validate(user)
+
+
+@router.patch("/me/voice-settings", response_model=UserOut)
+async def update_voice_settings(
+    payload: VoiceSettingsUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user.voice_assistant_enabled = payload.voice_assistant_enabled
+    await db.commit()
+    await db.refresh(user)
     return UserOut.model_validate(user)
 
 

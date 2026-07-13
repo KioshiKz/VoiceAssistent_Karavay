@@ -55,17 +55,25 @@ class OrderLine(Base):
 
     order: Mapped["Order"] = relationship(back_populates="lines")
     history: Mapped[list["OrderLineHistory"]] = relationship(
-        back_populates="order_line", cascade="all, delete-orphan", order_by="OrderLineHistory.created_at"
+        back_populates="order_line", order_by="OrderLineHistory.created_at", passive_deletes=True
     )
 
 
 class OrderLineHistory(Base):
+    """order_line_id survives line deletion (ON DELETE SET NULL) so audit trail
+    isn't lost when a manually-created line is removed; order_id/product_name_raw
+    are snapshotted here for the same reason."""
+
     __tablename__ = "order_line_history"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    order_line_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("order_lines.id", ondelete="CASCADE"), nullable=False
+    order_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("order_lines.id", ondelete="SET NULL")
     )
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL")
+    )
+    product_name_raw: Mapped[str | None] = mapped_column(String(255))
     actor_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"))
     event_type: Mapped[str] = mapped_column(String(40), nullable=False)
     old_value: Mapped[dict | None] = mapped_column(JSONB)
@@ -73,4 +81,4 @@ class OrderLineHistory(Base):
     note: Mapped[str | None] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    order_line: Mapped["OrderLine"] = relationship(back_populates="history")
+    order_line: Mapped["OrderLine | None"] = relationship(back_populates="history")

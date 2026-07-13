@@ -1,10 +1,28 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.routers import auth, events, execution, folders, ingredients, orders, products, roles, users, voice
+from app.services import tts_service
 
-app = FastAPI(title="Karavay Production Console")
+
+async def _warm_up_tts() -> None:
+    try:
+        await tts_service.synthesize("Голосовой помощник готов.")
+    except Exception:
+        pass  # TTS is optional; the first real request will just pay this cost instead.
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(_warm_up_tts())
+    yield
+
+
+app = FastAPI(title="Karavay Production Console", lifespan=lifespan)
 
 frontend_origins = {
     settings.frontend_origin,

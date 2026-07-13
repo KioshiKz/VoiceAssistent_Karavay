@@ -11,3 +11,9 @@ pyjwt==2.10.1
 python-multipart==0.0.20
 openpyxl==3.1.5
 email-validator==2.2.0
+
+# Offline TTS (Silero) for /api/voice/speak. CPU-only wheel is enough here;
+# to avoid the ~2GB CUDA download on install, use:
+#   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1
+numpy==2.1.3

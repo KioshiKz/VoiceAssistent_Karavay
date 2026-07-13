@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { voiceApi } from "../api/endpoints";
+import { useAuth } from "../auth/AuthContext";
 
-type VoiceCommand = "advance" | "rewind" | "start" | "stop" | "fullscreen";
+type VoiceCommand = "advance" | "rewind" | "start" | "stop" | "fullscreen" | "repeat" | "announce";
 type VoiceCue = "wake" | "success" | "error";
 
 interface SpeechRecognitionResultLike {
@@ -74,6 +75,7 @@ function playVoiceCue(cue: VoiceCue) {
 
   try {
     const context = new AudioContextCtor();
+    if (context.state === "suspended") void context.resume();
     let offset = 0;
     for (const [frequency, duration] of sequences[cue]) {
       const start = context.currentTime + offset;
@@ -97,6 +99,8 @@ function playVoiceCue(cue: VoiceCue) {
 
 export function VoiceAssistant() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const voiceEnabled = user?.voice_assistant_enabled !== false;
   const [supported, setSupported] = useState(true);
   const [armed, setArmed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -137,6 +141,10 @@ export function VoiceAssistant() {
       text.includes("заявки")
     ) {
       navigate("/execution");
+      // Fires immediately if ExecutionPanel is already mounted (re-announces
+      // the current step even though it was already spoken once); on a fresh
+      // navigation the panel's own mount-time effect announces it instead.
+      emitVoiceCommand("announce");
       showMessage("Открываю выполнение заявки");
       playVoiceCue("success");
       setArmedState(false);
@@ -166,6 +174,13 @@ export function VoiceAssistant() {
     if (text.includes("старт")) {
       const handled = emitVoiceCommand("start");
       showMessage(handled ? "Команда: старт" : "Сейчас нет таймера для старта");
+      playVoiceCue(handled ? "success" : "error");
+      setArmedState(false);
+      return;
+    }
+    if (text.includes("повтори")) {
+      const handled = emitVoiceCommand("repeat");
+      showMessage(handled ? "Повторяю" : "Нечего повторять");
       playVoiceCue(handled ? "success" : "error");
       setArmedState(false);
       return;
@@ -210,6 +225,7 @@ export function VoiceAssistant() {
   }, [handleCommand, setArmedState, showMessage]);
 
   useEffect(() => {
+    if (!voiceEnabled) return;
     let cancelled = false;
 
     const pollVoiceEvents = async () => {
@@ -237,9 +253,10 @@ export function VoiceAssistant() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [handleText]);
+  }, [handleText, voiceEnabled]);
 
   useEffect(() => {
+    if (!voiceEnabled) return;
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Recognition) {
       setSupported(false);
@@ -281,8 +298,9 @@ export function VoiceAssistant() {
       recognitionRef.current = null;
       if (clearTimerRef.current) window.clearTimeout(clearTimerRef.current);
     };
-  }, [handleText, showMessage]);
+  }, [handleText, showMessage, voiceEnabled]);
 
+  if (!voiceEnabled) return null;
   if (!armed && !message) return null;
 
   return (

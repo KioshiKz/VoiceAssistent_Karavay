@@ -29,6 +29,7 @@ async def list_users(db: AsyncSession = Depends(get_db)):
             email=u.email,
             full_name=u.full_name,
             is_active=u.is_active,
+            voice_assistant_enabled=u.voice_assistant_enabled,
             role_names=[ur.role.name for ur in u.user_roles if ur.role],
         )
         for u in users
@@ -50,7 +51,14 @@ async def create_user(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    return UserListOut(id=user.id, email=user.email, full_name=user.full_name, is_active=user.is_active, role_names=[])
+    return UserListOut(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        voice_assistant_enabled=user.voice_assistant_enabled,
+        role_names=[],
+    )
 
 
 async def _get_user_or_404(db: AsyncSession, user_id: uuid.UUID) -> User:
@@ -77,6 +85,7 @@ async def update_user(user_id: uuid.UUID, payload: UserUpdate, db: AsyncSession 
         email=user.email,
         full_name=user.full_name,
         is_active=user.is_active,
+        voice_assistant_enabled=user.voice_assistant_enabled,
         role_names=[ur.role.name for ur in user.user_roles if ur.role],
     )
 
@@ -101,5 +110,6 @@ async def set_user_roles(user_id: uuid.UUID, payload: UserRolesSet, db: AsyncSes
         email=refreshed.email,
         full_name=refreshed.full_name,
         is_active=refreshed.is_active,
+        voice_assistant_enabled=refreshed.voice_assistant_enabled,
         role_names=[ur.role.name for ur in refreshed.user_roles if ur.role],
     )

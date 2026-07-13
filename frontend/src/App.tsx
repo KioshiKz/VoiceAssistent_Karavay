@@ -9,6 +9,9 @@ import { RolesPermissions } from "./pages/RolesPermissions";
 import { Users } from "./pages/Users";
 import { UploadOrder } from "./pages/UploadOrder";
 import { CurrentOrder } from "./pages/CurrentOrder";
+import { OrdersList } from "./pages/OrdersList";
+import { OrderDetail } from "./pages/OrderDetail";
+import { Monitoring } from "./pages/Monitoring";
 import { ExecutionView } from "./pages/ExecutionView";
 import { ExecutionQueue } from "./pages/ExecutionQueue";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
@@ -94,6 +97,30 @@ function App() {
         element={
           <ProtectedRoute tabView="current_order">
             <CurrentOrder />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders"
+        element={
+          <ProtectedRoute tabView="orders_list">
+            <OrdersList />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders/:orderId"
+        element={
+          <ProtectedRoute tabView="orders_list">
+            <OrderDetail />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/monitoring"
+        element={
+          <ProtectedRoute tabView="order_monitoring">
+            <Monitoring />
           </ProtectedRoute>
         }
       />

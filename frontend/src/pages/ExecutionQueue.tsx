@@ -5,6 +5,7 @@ import type { CurrentOrderOut, OrderLineOut } from "../api/types";
 import { ConsoleShell } from "../components/ConsoleShell";
 import { ExecutionPanel } from "../components/ExecutionPanel";
 import { VoiceAssistant } from "../components/VoiceAssistant";
+import { speak } from "../utils/speech";
 
 function statusLabel(status: OrderLineOut["status"]) {
   if (status === "pending") return "ожидает";
@@ -174,6 +175,32 @@ function productMatchesQuery(line: OrderLineOut, productQuery: string) {
   return productQuery.split(" ").every((token) => productText.includes(token));
 }
 
+function extractDirectTime(query: string): { time: string; remainder: string } | null {
+  const normalized = normalizeVoiceText(query);
+
+  // "14:30" / "14.30" — punctuation form (rare from speech, common if typed).
+  const punctuated = normalized.match(/(?:^|\s)([01]?\d|2[0-3])\s*[:.]\s*([0-5]\d)(?:\s|$)/);
+  // "14 30" — two bare digit tokens, which is what speech recognition actually
+  // produces for spoken times (no colon gets inserted).
+  const bareDigits = normalized.match(/(?:^|\s)([01]?\d|2[0-3])\s+([0-5]\d)(?:\s|$)/);
+  const match = punctuated ?? bareDigits;
+  if (!match || match.index === undefined) return null;
+
+  const time = formatTimeValue(Number(match[1]), Number(match[2]));
+  if (!time) return null;
+
+  const before = normalized.slice(0, match.index);
+  const after = normalized.slice(match.index + match[0].length);
+  const remainderTokens = tokenizeWords(`${before} ${after}`).filter(
+    (token) => !TIME_QUERY_STOP_WORDS.has(token) && !PRODUCT_QUERY_STOP_WORDS.has(token),
+  );
+  return { time, remainder: remainderTokens.join(" ") };
+}
+
+function announceLine(time: string, line: OrderLineOut) {
+  void speak(`Заявка на ${time.replace(":", " ")}: ${line.product_name_raw}, ${line.quantity} штук.`);
+}
+
 export function ExecutionQueue() {
   const [order, setOrder] = useState<CurrentOrderOut | null>(null);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
@@ -260,20 +287,27 @@ export function ExecutionQueue() {
     [selectableLines, selectedLineId],
   );
 
-  const selectFirstMatchingLine = useCallback(
+  const findFirstMatchingLine = useCallback(
     (predicate: (line: OrderLineOut) => boolean) => {
-      if (!selectableLines.length) return false;
+      if (!selectableLines.length) return null;
       const currentIndex = selectableLines.findIndex((line) => line.id === selectedLineId);
       const searchOrder =
         currentIndex === -1
           ? selectableLines
           : [...selectableLines.slice(currentIndex + 1), ...selectableLines.slice(0, currentIndex + 1)];
-      const match = searchOrder.find(predicate);
+      return searchOrder.find(predicate) ?? null;
+    },
+    [selectableLines, selectedLineId],
+  );
+
+  const selectFirstMatchingLine = useCallback(
+    (predicate: (line: OrderLineOut) => boolean) => {
+      const match = findFirstMatchingLine(predicate);
       if (!match) return false;
       setSelectedLineId(match.id);
       return true;
     },
-    [selectableLines, selectedLineId],
+    [findFirstMatchingLine],
   );
 
   const handleOrderVoiceTranscript = useCallback(
@@ -294,9 +328,31 @@ export function ExecutionQueue() {
       const query = text.slice(markerIndex + "заявка".length).trim();
       if (!query) return false;
 
-      const time = parseTimeQuery(query);
-      if (time && selectFirstMatchingLine((line) => line.due_time.slice(0, 5) === time)) {
+      // Digit-form time ("14:30", "14.30") lets us isolate a remaining product
+      // phrase, so "продукт + время" and bare "время" can be told apart.
+      const direct = extractDirectTime(query);
+      if (direct) {
+        if (direct.remainder) {
+          return selectFirstMatchingLine(
+            (line) => line.due_time.slice(0, 5) === direct.time && productMatchesQuery(line, direct.remainder),
+          );
+        }
+        const match = findFirstMatchingLine((line) => line.due_time.slice(0, 5) === direct.time);
+        if (!match) return false;
+        setSelectedLineId(match.id);
+        announceLine(direct.time, match);
         return true;
+      }
+
+      // Word-form time ("четырнадцать тридцать") only supports the bare-time case.
+      const time = parseTimeQuery(query);
+      if (time) {
+        const match = findFirstMatchingLine((line) => line.due_time.slice(0, 5) === time);
+        if (match) {
+          setSelectedLineId(match.id);
+          announceLine(time, match);
+          return true;
+        }
       }
 
       const quantityQuery = parseQuantityQuery(query);
@@ -306,7 +362,7 @@ export function ExecutionQueue() {
         (line) => line.quantity === quantityQuery.quantity && productMatchesQuery(line, quantityQuery.productQuery),
       );
     },
-    [selectFirstMatchingLine, selectRelativeLine],
+    [findFirstMatchingLine, selectFirstMatchingLine, selectRelativeLine],
   );
 
   useEffect(() => {

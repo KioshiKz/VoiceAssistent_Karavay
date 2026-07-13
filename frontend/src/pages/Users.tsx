@@ -48,6 +48,11 @@ export function Users() {
     reloadUsers();
   }
 
+  async function toggleVoiceAssistant(u: UserListOut) {
+    await usersApi.update(u.id, { voice_assistant_enabled: !u.voice_assistant_enabled });
+    reloadUsers();
+  }
+
   return (
     <div>
       <div className="page-topbar">
@@ -62,6 +67,7 @@ export function Users() {
               <th>Имя</th>
               <th>Роли</th>
               <th>Статус</th>
+              <th>Голос. помощник</th>
               <th></th>
             </tr>
           </thead>
@@ -72,9 +78,13 @@ export function Users() {
                 <td>{u.full_name}</td>
                 <td>{u.role_names.join(", ") || "—"}</td>
                 <td>{u.is_active ? "активен" : "заблокирован"}</td>
+                <td>{u.voice_assistant_enabled ? "включен" : "выключен"}</td>
                 <td style={{ display: "flex", gap: 6 }}>
                   <button onClick={() => selectUser(u)}>Роли</button>
                   <button onClick={() => toggleActive(u)}>{u.is_active ? "Заблокировать" : "Активировать"}</button>
+                  <button onClick={() => toggleVoiceAssistant(u)}>
+                    {u.voice_assistant_enabled ? "Выключить голос" : "Включить голос"}
+                  </button>
                 </td>
               </tr>
             ))}
