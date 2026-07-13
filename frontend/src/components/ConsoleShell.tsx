@@ -1,11 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import {
-  Activity,
   Archive,
   CalendarClock,
   ClipboardList,
-  Files,
   FolderTree,
   Home,
   LogOut,
@@ -14,6 +12,8 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
+import { foldersApi } from "../api/endpoints";
+import type { FolderOut } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { VoiceAssistant } from "./VoiceAssistant";
 
@@ -53,28 +53,10 @@ const NAV_ITEMS = [
       hasTabView("users") || hasGlobal("admin.manage"),
   },
   {
-    to: "/orders/upload",
-    label: "Загрузка",
-    icon: Files,
-    canShow: (hasTabView: (key: string) => boolean) => hasTabView("upload_order"),
-  },
-  {
     to: "/orders/current",
     label: "Текущая заявка",
     icon: ClipboardList,
     canShow: (hasTabView: (key: string) => boolean) => hasTabView("current_order"),
-  },
-  {
-    to: "/orders",
-    label: "Все заявки",
-    icon: Archive,
-    canShow: (hasTabView: (key: string) => boolean) => hasTabView("orders_list"),
-  },
-  {
-    to: "/monitoring",
-    label: "Мониторинг",
-    icon: Activity,
-    canShow: (hasTabView: (key: string) => boolean) => hasTabView("order_monitoring"),
   },
   {
     to: "/execution",
@@ -87,8 +69,43 @@ const NAV_ITEMS = [
 
 export function ConsoleShell({ title, subtitle, children, className, actions }: ConsoleShellProps) {
   const { user, hasTabView, hasGlobal, logout, updateVoiceAssistantEnabled } = useAuth();
-  const visibleItems = NAV_ITEMS.filter((item) => item.canShow(hasTabView, hasGlobal));
+  const [workshops, setWorkshops] = useState<FolderOut[]>([]);
+  const visibleStaticItems = NAV_ITEMS.filter((item) => item.canShow(hasTabView, hasGlobal));
+  const executionItems = visibleStaticItems.filter((item) => item.to === "/execution");
+  const primaryItems = visibleStaticItems.filter((item) => item.to !== "/execution");
+  const workshopItems = workshops.map((workshop) => ({
+    to: `/workshops/${workshop.id}/orders`,
+    label: `Заявки: ${workshop.name}`,
+    icon: Archive,
+  }));
+  const visibleItems = [...primaryItems, ...workshopItems, ...executionItems];
   const voiceEnabled = user?.voice_assistant_enabled !== false;
+
+  useEffect(() => {
+    if (!hasTabView("orders_list")) {
+      setWorkshops([]);
+      return;
+    }
+
+    let active = true;
+    foldersApi
+      .tree()
+      .then((folders) => {
+        if (!active) return;
+        setWorkshops(
+          folders
+            .filter((folder) => folder.parent_id === null)
+            .sort((a, b) => a.name.localeCompare(b.name, "ru")),
+        );
+      })
+      .catch(() => {
+        if (active) setWorkshops([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [hasTabView]);
 
   return (
     <div className="console-shell">

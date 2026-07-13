@@ -3,14 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { ordersApi } from "../api/endpoints";
 import type { OrderLineHistoryEntryOut } from "../api/types";
 import { ConsoleShell } from "../components/ConsoleShell";
-
-const EVENT_LABELS: Record<string, string> = {
-  create: "создание",
-  edit: "редактирование",
-  match: "сопоставление",
-  cancel: "отмена",
-  delete: "удаление",
-};
+import { HISTORY_LABELS } from "../utils/orderHistory";
 
 export function Monitoring() {
   const [items, setItems] = useState<OrderLineHistoryEntryOut[]>([]);
@@ -43,7 +36,7 @@ export function Monitoring() {
         <div className="history-list">
           {items.map((item) => (
             <article key={item.id}>
-              <strong>{EVENT_LABELS[item.event_type] ?? item.event_type}</strong>{" "}
+              <strong>{HISTORY_LABELS[item.event_type] ?? item.event_type}</strong>{" "}
               {item.product_name_raw && <span>{item.product_name_raw}</span>}
               <span>
                 {item.actor_name ?? "система"} · {new Date(item.created_at).toLocaleString("ru-RU")}

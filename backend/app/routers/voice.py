@@ -143,5 +143,14 @@ async def voice_events(after: int = 0):
 async def speak(payload: VoiceSpeakIn, user: User = Depends(get_current_user)):
     if not user.voice_assistant_enabled:
         raise HTTPException(status_code=409, detail="voice_assistant_disabled")
-    wav_bytes = await tts_service.synthesize(payload.text)
+    try:
+        wav_bytes = await tts_service.synthesize(payload.text)
+    except tts_service.TTSUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "server_tts_unavailable",
+                "message": "Серверный синтез речи недоступен. Используйте голос браузера.",
+            },
+        ) from exc
     return Response(content=wav_bytes, media_type="audio/wav")

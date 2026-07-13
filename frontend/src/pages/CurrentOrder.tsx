@@ -8,6 +8,7 @@ export function CurrentOrder() {
       editTabKey="current_order"
       title="Текущая заявка"
       subtitle="Просмотр очереди, сопоставление продукции, правки администратора и история изменений."
+      allowCurrentSelection
     />
   );
 }

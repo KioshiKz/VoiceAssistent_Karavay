@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Navigate, Routes, Route } from "react-router-dom";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { FileManager } from "./pages/FileManager";
@@ -7,11 +7,10 @@ import { ProductEditor } from "./pages/ProductEditor";
 import { EventEditor } from "./pages/EventEditor";
 import { RolesPermissions } from "./pages/RolesPermissions";
 import { Users } from "./pages/Users";
-import { UploadOrder } from "./pages/UploadOrder";
 import { CurrentOrder } from "./pages/CurrentOrder";
 import { OrdersList } from "./pages/OrdersList";
 import { OrderDetail } from "./pages/OrderDetail";
-import { Monitoring } from "./pages/Monitoring";
+import { OrdersLanding } from "./pages/OrdersLanding";
 import { ExecutionView } from "./pages/ExecutionView";
 import { ExecutionQueue } from "./pages/ExecutionQueue";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
@@ -87,8 +86,8 @@ function App() {
       <Route
         path="/orders/upload"
         element={
-          <ProtectedRoute tabView="upload_order">
-            <UploadOrder />
+          <ProtectedRoute tabView="orders_list">
+            <Navigate to="/orders" replace />
           </ProtectedRoute>
         }
       />
@@ -104,12 +103,20 @@ function App() {
         path="/orders"
         element={
           <ProtectedRoute tabView="orders_list">
+            <OrdersLanding />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/workshops/:workshopId/orders"
+        element={
+          <ProtectedRoute tabView="orders_list">
             <OrdersList />
           </ProtectedRoute>
         }
       />
       <Route
-        path="/orders/:orderId"
+        path="/workshops/:workshopId/orders/:orderId"
         element={
           <ProtectedRoute tabView="orders_list">
             <OrderDetail />
@@ -119,8 +126,8 @@ function App() {
       <Route
         path="/monitoring"
         element={
-          <ProtectedRoute tabView="order_monitoring">
-            <Monitoring />
+          <ProtectedRoute tabView="orders_list">
+            <Navigate to="/orders" replace />
           </ProtectedRoute>
         }
       />

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { ordersApi } from "../api/endpoints";
 import type { CurrentOrderOut, OrderLineOut } from "../api/types";
 import { ConsoleShell } from "../components/ConsoleShell";
+import { CurrentOrderSelection } from "../components/CurrentOrderSelection";
 import { ExecutionPanel } from "../components/ExecutionPanel";
 import { VoiceAssistant } from "../components/VoiceAssistant";
 import { speak } from "../utils/speech";
@@ -203,10 +204,15 @@ function announceLine(time: string, line: OrderLineOut) {
 
 export function ExecutionQueue() {
   const [order, setOrder] = useState<CurrentOrderOut | null>(null);
+  const [currentContext, setCurrentContext] = useState<{
+    workshop_folder_id: string;
+    execution_date: string;
+  } | null>(null);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(() => window.sessionStorage.getItem("execution-fullscreen-requested") === "1");
   const [loading, setLoading] = useState(false);
   const [empty, setEmpty] = useState(false);
+  const reloadGeneration = useRef(0);
 
   const setExecutionFullscreen = useCallback((next: boolean) => {
     setFullscreen(next);
@@ -221,22 +227,43 @@ export function ExecutionQueue() {
     }
   }, []);
 
-  function reload() {
+  const reload = useCallback(() => {
+    const generation = ++reloadGeneration.current;
     setLoading(true);
     ordersApi
-      .current()
+      .current(currentContext ?? undefined)
       .then((next) => {
+        if (generation !== reloadGeneration.current) return;
         setOrder(next);
         setEmpty(false);
       })
       .catch(() => {
+        if (generation !== reloadGeneration.current) return;
         setOrder(null);
         setEmpty(true);
       })
-      .finally(() => setLoading(false));
-  }
+      .finally(() => {
+        if (generation === reloadGeneration.current) setLoading(false);
+      });
+  }, [currentContext]);
 
-  useEffect(reload, []);
+  useEffect(() => {
+    reload();
+    return () => {
+      reloadGeneration.current += 1;
+    };
+  }, [reload]);
+
+  function showSelectedCurrentOrder(nextOrder: CurrentOrderOut) {
+    reloadGeneration.current += 1;
+    setOrder(nextOrder);
+    setEmpty(false);
+    setCurrentContext(
+      nextOrder.workshop_folder_id
+        ? { workshop_folder_id: nextOrder.workshop_folder_id, execution_date: nextOrder.execution_date }
+        : null,
+    );
+  }
 
   useEffect(() => {
     function onVoiceCommand(event: Event) {
@@ -396,6 +423,7 @@ export function ExecutionQueue() {
         </button>
       }
     >
+      <CurrentOrderSelection currentOrder={order} onChanged={showSelectedCurrentOrder} />
       {empty || !order ? (
         <div className="empty-state">Заявки пока нет - ожидайте</div>
       ) : (

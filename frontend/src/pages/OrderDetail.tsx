@@ -12,7 +12,7 @@ export function OrderDetail() {
       fetchOrder={fetchOrder}
       editTabKey="orders_list"
       title="Заявка"
-      subtitle="Просмотр и редактирование архивной заявки."
+      subtitle="Состав, ход выполнения и история действий по заявке."
     />
   );
 }

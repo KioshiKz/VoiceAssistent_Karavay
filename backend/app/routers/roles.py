@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import require_permission
 from app.db.session import get_db
+from app.models.folder import Folder
 from app.models.permission import AppTab, PermissionDef, RolePermission
 from app.models.role import Role
 from app.schemas.role import (
@@ -104,6 +105,49 @@ async def replace_role_permissions(
     role = await _get_role_or_404(db, role_id)
     if role.is_system:
         raise HTTPException(409, detail="system_role_immutable")
+
+    permission_codes = {entry.permission_code for entry in payload.entries}
+    definitions_result = await db.execute(
+        select(PermissionDef).where(PermissionDef.code.in_(permission_codes))
+    )
+    definitions = {definition.code: definition for definition in definitions_result.scalars().all()}
+    if set(definitions) != permission_codes:
+        raise HTTPException(400, detail="unknown_permission_code")
+
+    seen_entries: set[tuple[str, uuid.UUID | None, uuid.UUID | None]] = set()
+    tab_ids: set[uuid.UUID] = set()
+    folder_ids: set[uuid.UUID] = set()
+    for entry in payload.entries:
+        key = (entry.permission_code, entry.tab_id, entry.folder_id)
+        if key in seen_entries:
+            raise HTTPException(400, detail="duplicate_permission_scope")
+        seen_entries.add(key)
+
+        scope_type = definitions[entry.permission_code].scope_type
+        valid_scope = (
+            (scope_type == "global" and entry.tab_id is None and entry.folder_id is None)
+            or (scope_type == "tab" and entry.tab_id is not None and entry.folder_id is None)
+            or (scope_type == "folder" and entry.tab_id is None and entry.folder_id is not None)
+        )
+        if not valid_scope:
+            raise HTTPException(400, detail="permission_scope_mismatch")
+        if entry.tab_id is not None:
+            tab_ids.add(entry.tab_id)
+        if entry.folder_id is not None:
+            folder_ids.add(entry.folder_id)
+
+    if tab_ids:
+        existing_tab_ids = set(
+            (await db.execute(select(AppTab.id).where(AppTab.id.in_(tab_ids)))).scalars().all()
+        )
+        if existing_tab_ids != tab_ids:
+            raise HTTPException(400, detail="unknown_tab_id")
+    if folder_ids:
+        existing_folder_ids = set(
+            (await db.execute(select(Folder.id).where(Folder.id.in_(folder_ids)))).scalars().all()
+        )
+        if existing_folder_ids != folder_ids:
+            raise HTTPException(400, detail="unknown_folder_id")
 
     await db.execute(RolePermission.__table__.delete().where(RolePermission.role_id == role_id))
     for entry in payload.entries:

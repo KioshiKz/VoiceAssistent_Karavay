@@ -6,7 +6,7 @@ from app.models.ingredient import Ingredient
 from app.models.event_template import EventTemplate
 from app.models.product import Product
 from app.models.recipe_step import RecipeStep
-from app.models.order import Order, OrderLine, OrderLineHistory
+from app.models.order import CurrentOrderSelection, Order, OrderLine, OrderLineHistory
 from app.models.execution import ExecutionPlan, ExecutionPlanStep
 
 __all__ = [
@@ -22,6 +22,7 @@ __all__ = [
     "Product",
     "RecipeStep",
     "Order",
+    "CurrentOrderSelection",
     "OrderLine",
     "OrderLineHistory",
     "ExecutionPlan",

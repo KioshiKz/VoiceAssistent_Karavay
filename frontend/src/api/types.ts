@@ -194,6 +194,10 @@ export interface OrderLineOut {
   last_advanced_at: string | null;
   workshop_folder_id: string | null;
   workshop_folder_name: string | null;
+  execution_plan_status: string | null;
+  current_step_index: number | null;
+  total_steps: number;
+  current_step_name: string | null;
 }
 
 export interface OrderUploadOut {
@@ -207,6 +211,28 @@ export interface OrderUploadOut {
 export interface CurrentOrderOut {
   order_id: string;
   execution_date: string;
+  workshop_folder_id: string | null;
+  workshop_folder_name: string | null;
+  selection_mode: "automatic" | "manual";
+  selected_at: string | null;
+  selected_by_name: string | null;
+  lines: OrderLineOut[];
+}
+
+export type OrderStatus = "pending" | "in_progress" | "completed";
+
+export interface OrderDetailOut {
+  order_id: string;
+  execution_date: string;
+  source_filename: string | null;
+  uploaded_at: string;
+  uploaded_by_name: string | null;
+  workshop_folder_id: string | null;
+  workshop_folder_name: string | null;
+  force_completed_at: string | null;
+  force_completed_by: string | null;
+  force_completed_by_name: string | null;
+  status: OrderStatus;
   lines: OrderLineOut[];
 }
 
@@ -231,13 +257,14 @@ export interface OrderLineHistoryEntryOut extends OrderLineHistoryOut {
 export interface OrderSummaryOut {
   id: string;
   execution_date: string;
-  source_filename: string;
+  source_filename: string | null;
   uploaded_at: string;
   uploaded_by_name: string | null;
   workshop_folder_id: string | null;
   workshop_folder_name: string | null;
   total_lines: number;
   active_lines: number;
+  status: OrderStatus;
 }
 
 export interface ExecutionPlanStepOut {

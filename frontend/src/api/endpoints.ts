@@ -11,6 +11,7 @@ import type {
   OrderLineHistoryEntryOut,
   OrderLineHistoryOut,
   OrderLineOut,
+  OrderDetailOut,
   OrderSummaryOut,
   OrderUploadOut,
   PermissionDef,
@@ -115,6 +116,8 @@ export const productsApi = {
   listInFolder: (folderId: string) =>
     apiClient.get<ProductOut[]>(`/folders/${folderId}/products`).then((r) => r.data),
   search: (q: string) => apiClient.get<ProductOut[]>("/products/search", { params: { q } }).then((r) => r.data),
+  availableForWorkshop: (workshopId: string) =>
+    apiClient.get<ProductOut[]>(`/workshops/${workshopId}/products`).then((r) => r.data),
   create: (folderId: string, payload: { name: string; base_quantity: number }) =>
     apiClient.post<ProductOut>(`/folders/${folderId}/products`, payload).then((r) => r.data),
   get: (id: string) => apiClient.get<ProductDetailOut>(`/products/${id}`).then((r) => r.data),
@@ -155,9 +158,31 @@ export const ordersApi = {
       .post<OrderUploadOut>("/orders/upload", form, { headers: { "Content-Type": "multipart/form-data" } })
       .then((r) => r.data);
   },
-  current: () => apiClient.get<CurrentOrderOut>("/orders/current").then((r) => r.data),
-  list: () => apiClient.get<OrderSummaryOut[]>("/orders").then((r) => r.data),
-  getOrder: (orderId: string) => apiClient.get<CurrentOrderOut>(`/orders/${orderId}`).then((r) => r.data),
+  current: (params?: { workshop_folder_id?: string; execution_date?: string }) =>
+    apiClient.get<CurrentOrderOut>("/orders/current", { params }).then((r) => r.data),
+  currentCandidates: (workshopFolderId: string, executionDate: string) =>
+    apiClient
+      .get<OrderSummaryOut[]>("/orders/current/candidates", {
+        params: { workshop_folder_id: workshopFolderId, execution_date: executionDate },
+      })
+      .then((r) => r.data),
+  setCurrentSelection: (workshopFolderId: string, executionDate: string, orderId: string | null) =>
+    apiClient
+      .put<CurrentOrderOut>(
+        "/orders/current/selection",
+        { order_id: orderId },
+        { params: { workshop_folder_id: workshopFolderId, execution_date: executionDate } },
+      )
+      .then((r) => r.data),
+  list: (workshopId: string, history = false) =>
+    apiClient
+      .get<OrderSummaryOut[]>("/orders", { params: { workshop_folder_id: workshopId, history } })
+      .then((r) => r.data),
+  getOrder: (orderId: string) => apiClient.get<OrderDetailOut>(`/orders/${orderId}`).then((r) => r.data),
+  create: (payload: { execution_date: string; workshop_folder_id: string }) =>
+    apiClient.post<OrderDetailOut>("/orders", payload).then((r) => r.data),
+  forceComplete: (orderId: string) =>
+    apiClient.post<OrderDetailOut>(`/orders/${orderId}/force-complete`).then((r) => r.data),
   createLine: (payload: {
     order_id: string;
     product_name_raw: string;

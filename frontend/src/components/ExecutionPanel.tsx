@@ -437,7 +437,11 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
               {fullscreen ? "Выйти" : "Полный экран"}
             </button>
           )}
-          <button type="button" onClick={rewind} disabled={advancing || plan.current_step_index <= 0}>
+          <button
+            type="button"
+            onClick={rewind}
+            disabled={advancing || plan.status === "completed" || plan.current_step_index <= 0}
+          >
             <ArrowLeft size={16} />
             Вернуться
           </button>

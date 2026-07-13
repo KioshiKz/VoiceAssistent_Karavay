@@ -1,5 +1,6 @@
 import datetime
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,10 @@ class OrderLineOut(BaseModel):
     last_advanced_at: datetime.datetime | None
     workshop_folder_id: uuid.UUID | None = None
     workshop_folder_name: str | None = None
+    execution_plan_status: str | None = None
+    current_step_index: int | None = None
+    total_steps: int = 0
+    current_step_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -53,6 +58,11 @@ class OrderLineCreate(BaseModel):
     matched_product_id: uuid.UUID | None = None
 
 
+class OrderCreate(BaseModel):
+    execution_date: datetime.date
+    workshop_folder_id: uuid.UUID
+
+
 class OrderLineCancel(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 
@@ -80,16 +90,41 @@ class OrderLineHistoryEntryOut(OrderLineHistoryOut):
 class CurrentOrderOut(BaseModel):
     order_id: uuid.UUID
     execution_date: datetime.date
+    workshop_folder_id: uuid.UUID | None
+    workshop_folder_name: str | None
+    selection_mode: Literal["automatic", "manual"]
+    selected_at: datetime.datetime | None = None
+    selected_by_name: str | None = None
+    lines: list[OrderLineOut]
+
+
+class CurrentOrderSelectionIn(BaseModel):
+    order_id: uuid.UUID | None
+
+
+class OrderDetailOut(BaseModel):
+    order_id: uuid.UUID
+    execution_date: datetime.date
+    source_filename: str | None
+    uploaded_at: datetime.datetime
+    uploaded_by_name: str | None
+    workshop_folder_id: uuid.UUID | None
+    workshop_folder_name: str | None
+    force_completed_at: datetime.datetime | None
+    force_completed_by: uuid.UUID | None
+    force_completed_by_name: str | None
+    status: str
     lines: list[OrderLineOut]
 
 
 class OrderSummaryOut(BaseModel):
     id: uuid.UUID
     execution_date: datetime.date
-    source_filename: str
+    source_filename: str | None
     uploaded_at: datetime.datetime
     uploaded_by_name: str | None
     workshop_folder_id: uuid.UUID | None
     workshop_folder_name: str | None
     total_lines: int
     active_lines: int
+    status: str

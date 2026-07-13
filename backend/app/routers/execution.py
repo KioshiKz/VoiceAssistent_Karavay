@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import require_permission
@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.execution import ExecutionPlan
 from app.models.user import User
 from app.schemas.execution import ExecutionPlanOut, ExecutionPlanStepOut
-from app.services import execution_service, permission_service
+from app.services import execution_service, order_access_service, permission_service
 from app.services.unit_conversion import format_compound
 
 router = APIRouter(prefix="/api", tags=["execution"])
@@ -65,6 +65,7 @@ async def get_execution_plan(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("order.execute")),
 ):
+    await order_access_service.require_line_permission(db, user, order_line_id, "folder.view")
     plan = await execution_service.get_or_create_execution_plan(db, order_line_id)
     can_view_full_recipe = await permission_service.has_global_permission(db, user, "recipe.full_view")
     return _plan_to_out(plan, can_view_full_recipe)
@@ -79,6 +80,10 @@ async def advance(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("order.execute")),
 ):
+    existing = await db.get(ExecutionPlan, plan_id)
+    if existing is None:
+        raise HTTPException(404, detail="execution_plan_not_found")
+    await order_access_service.require_line_permission(db, user, existing.order_line_id, "folder.view")
     plan = await execution_service.advance_step(db, plan_id, user.id)
     can_view_full_recipe = await permission_service.has_global_permission(db, user, "recipe.full_view")
     return _plan_to_out(plan, can_view_full_recipe)
@@ -93,6 +98,10 @@ async def rewind(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("order.execute")),
 ):
+    existing = await db.get(ExecutionPlan, plan_id)
+    if existing is None:
+        raise HTTPException(404, detail="execution_plan_not_found")
+    await order_access_service.require_line_permission(db, user, existing.order_line_id, "folder.view")
     plan = await execution_service.rewind_step(db, plan_id, user.id)
     can_view_full_recipe = await permission_service.has_global_permission(db, user, "recipe.full_view")
     return _plan_to_out(plan, can_view_full_recipe)

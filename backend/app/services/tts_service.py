@@ -22,6 +22,21 @@ SPEAKER = "baya"
 _model = None
 _model_lock = threading.Lock()
 
+
+class TTSUnavailableError(RuntimeError):
+    """Raised when the optional server-side speech engine cannot be used."""
+
+
+def _import_torch():
+    try:
+        import torch
+    except (ImportError, OSError) as exc:
+        raise TTSUnavailableError(
+            "Silero TTS requires the optional CPU-only torch dependency"
+        ) from exc
+    return torch
+
+
 _ONES = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]
 _TEENS = [
     "десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать",
@@ -139,8 +154,7 @@ def _expand_units(text: str) -> str:
 def ensure_model_file() -> Path:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     if not MODEL_PATH.exists():
-        import torch
-
+        torch = _import_torch()
         torch.hub.download_url_to_file(MODEL_URL, str(MODEL_PATH))
     return MODEL_PATH
 
@@ -152,19 +166,21 @@ def _load_model():
     with _model_lock:
         if _model is not None:
             return _model
-        import torch
-
+        torch = _import_torch()
         torch.set_num_threads(4)
         model_path = ensure_model_file()
-        model = torch.package.PackageImporter(str(model_path)).load_pickle("tts_models", "model")
+        # PyTorch's Windows file reader cannot open non-ASCII paths reliably
+        # (the project is commonly installed below a Cyrillic directory).
+        # Loading through a binary buffer keeps model discovery Unicode-safe.
+        model_buffer = io.BytesIO(model_path.read_bytes())
+        model = torch.package.PackageImporter(model_buffer).load_pickle("tts_models", "model")
         model.to(torch.device("cpu"))
         _model = model
         return _model
 
 
 def _synthesize_sync(text: str) -> bytes:
-    import torch
-
+    torch = _import_torch()
     model = _load_model()
     audio = model.apply_tts(text=text, speaker=SPEAKER, sample_rate=SAMPLE_RATE, put_accent=True, put_yo=True)
 
@@ -183,4 +199,9 @@ async def synthesize(text: str) -> bytes:
     if not clean:
         raise ValueError("empty_text")
     spoken_text = _expand_numbers(_expand_units(clean))
-    return await asyncio.to_thread(_synthesize_sync, spoken_text)
+    try:
+        return await asyncio.to_thread(_synthesize_sync, spoken_text)
+    except TTSUnavailableError:
+        raise
+    except Exception as exc:
+        raise TTSUnavailableError("Silero TTS synthesis failed") from exc

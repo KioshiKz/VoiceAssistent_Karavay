@@ -36,7 +36,7 @@ function TreeNode({
       <div
         className={`folder-tree-node${isActive ? " active" : ""}${isDropTarget ? " drop-target" : ""}`}
         style={{ paddingLeft: 8 + depth * 14 }}
-        draggable
+        draggable={node.parent_id !== null}
         onDragStart={(event) => event.dataTransfer.setData("text/folder-id", node.id)}
         onDragOver={(event) => {
           event.preventDefault();

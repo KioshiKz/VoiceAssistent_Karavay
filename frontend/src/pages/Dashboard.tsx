@@ -1,5 +1,8 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ClipboardList, FileUp, FolderTree, Mic, ShieldCheck, Sparkles, Users } from "lucide-react";
+import { Archive, ClipboardList, FolderTree, Mic, ShieldCheck, Sparkles, Users } from "lucide-react";
+import { foldersApi } from "../api/endpoints";
+import type { FolderOut } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { ConsoleShell } from "../components/ConsoleShell";
 
@@ -28,13 +31,6 @@ const SECTIONS = [
     icon: Users,
   },
   {
-    tabKey: "upload_order",
-    path: "/orders/upload",
-    title: "Загрузка заявки",
-    description: "Импорт Excel-заявки и проверка совпадений продукции.",
-    icon: FileUp,
-  },
-  {
     tabKey: "current_order",
     path: "/orders/current",
     title: "Текущая заявка",
@@ -53,10 +49,39 @@ const SECTIONS = [
 
 export function Dashboard() {
   const { hasTabView, hasGlobal } = useAuth();
-  const visible = SECTIONS.filter((section) => {
+  const [workshops, setWorkshops] = useState<FolderOut[]>([]);
+
+  useEffect(() => {
+    if (!hasTabView("orders_list")) {
+      setWorkshops([]);
+      return;
+    }
+    foldersApi
+      .tree()
+      .then((folders) =>
+        setWorkshops(
+          folders
+            .filter((folder) => folder.parent_id === null)
+            .sort((a, b) => a.name.localeCompare(b.name, "ru")),
+        ),
+      )
+      .catch(() => setWorkshops([]));
+  }, [hasTabView]);
+
+  const visibleStatic = SECTIONS.filter((section) => {
     if (section.tabKey === "execution_queue") return hasTabView(section.tabKey) && hasGlobal("order.execute");
     return section.globalCode ? hasTabView(section.tabKey) || hasGlobal(section.globalCode) : hasTabView(section.tabKey);
   });
+  const visible = [
+    ...visibleStatic,
+    ...workshops.map((workshop) => ({
+      tabKey: "orders_list",
+      path: `/workshops/${workshop.id}/orders`,
+      title: `Заявки: ${workshop.name}`,
+      description: "Активные заявки, загрузка Excel и история заявок этого цеха.",
+      icon: Archive,
+    })),
+  ];
 
   return (
     <ConsoleShell
@@ -94,8 +119,8 @@ export function Dashboard() {
                 Права и наследование в отдельной матрице
               </span>
               <span>
-                <FileUp size={17} />
-                Заявки и исполнение отдельными вкладками
+                <Archive size={17} />
+                Отдельный список заявок для каждого доступного цеха
               </span>
             </div>
           </aside>

@@ -448,8 +448,12 @@ export function RolesPermissions() {
 
                   <section className="permissions-section">
                     <div>
-                      <p className="eyebrow">Дерево слева</p>
-                      <h2>Права на папки</h2>
+                      <p className="eyebrow">Цеха и дерево папок</p>
+                      <h2>Доступ к цехам</h2>
+                      <p>
+                        Корневые папки являются цехами. Право «Просмотр» показывает отдельный раздел заявок
+                        выбранного цеха; права на действия с заявками настраиваются ниже.
+                      </p>
                     </div>
                     <div className="permission-matrix">
                       {folderTree.map((node) => (

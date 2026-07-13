@@ -86,7 +86,12 @@ async def has_folder_permission(db: AsyncSession, user: User, code: str, folder:
     if not rows:
         return False
 
-    # nearest-ancestor-wins: pick the row whose folder_id is deepest in the path
+    # Nearest ancestor wins. At that depth roles are additive, so an allow from
+    # one role deterministically wins over a deny from another role.
     depth_by_id = {fid: idx for idx, fid in enumerate(ancestor_ids)}
-    deepest = max(rows, key=lambda r: depth_by_id.get(r.folder_id, -1))
-    return deepest.granted
+    deepest_depth = max(depth_by_id.get(row.folder_id, -1) for row in rows)
+    return any(
+        row.granted
+        for row in rows
+        if depth_by_id.get(row.folder_id, -1) == deepest_depth
+    )

@@ -18,6 +18,16 @@ if errorlevel 1 (
     echo Postgres already running.
 )
 
+echo Applying database migrations...
+pushd "%ROOT%backend"
+".venv\Scripts\python.exe" -m alembic upgrade head
+if errorlevel 1 (
+    echo Database migration failed. Backend was not started.
+    popd
+    exit /b 1
+)
+popd
+
 echo Checking backend (port 8000)...
 "%SYS%\netstat.exe" -ano | "%SYS%\findstr.exe" ":8000 " | "%SYS%\findstr.exe" "LISTENING" >nul
 if errorlevel 1 (

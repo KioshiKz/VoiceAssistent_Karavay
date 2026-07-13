@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# CPU-only PyTorch avoids downloading CUDA packages. This file is optional:
+# the application can speak through the browser without it.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+numpy==2.1.3

@@ -2,11 +2,13 @@ import uuid
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.event_template import EventTemplate
 from app.models.folder import Folder
 from app.models.ingredient import Ingredient
+from app.models.order import Order
 from app.models.product import Product
 
 ROOT_SEGMENT = ""
@@ -69,6 +71,8 @@ async def _is_descendant(db: AsyncSession, candidate_id: uuid.UUID, ancestor_id:
 
 
 async def move_folder(db: AsyncSession, folder: Folder, new_parent_id: uuid.UUID | None) -> Folder:
+    if folder.parent_id is None and new_parent_id is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="cannot_move_workshop_into_folder")
     if new_parent_id is not None:
         if new_parent_id == folder.id or await _is_descendant(db, new_parent_id, folder.id):
             raise HTTPException(status.HTTP_409_CONFLICT, detail="cannot_move_into_own_subtree")
@@ -101,6 +105,10 @@ async def move_folder(db: AsyncSession, folder: Folder, new_parent_id: uuid.UUID
 
 
 async def delete_folder(db: AsyncSession, folder: Folder) -> None:
+    linked_orders = await db.execute(select(Order.id).where(Order.workshop_folder_id == folder.id).limit(1))
+    if linked_orders.first() is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="folder_not_empty_has_orders")
+
     child_folders = await db.execute(select(Folder.id).where(Folder.parent_id == folder.id))
     if child_folders.first() is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="folder_not_empty_has_subfolders")
@@ -111,7 +119,11 @@ async def delete_folder(db: AsyncSession, folder: Folder) -> None:
             raise HTTPException(status.HTTP_409_CONFLICT, detail="folder_not_empty_has_configs")
 
     await db.delete(folder)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="folder_not_empty") from exc
 
 
 async def get_folder_content(db: AsyncSession, folder: Folder) -> dict:

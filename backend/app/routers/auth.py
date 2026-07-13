@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user
 from app.core.security import create_access_token, create_refresh_token, verify_password
 from app.db.session import get_db
-from app.models.permission import AppTab, RolePermission
+from app.models.permission import AppTab, PermissionDef, RolePermission
 from app.models.role import UserRole
 from app.models.user import User
 from app.schemas.auth import LoginRequest, MePermissions, TabPermission, TokenResponse, UserOut, VoiceSettingsUpdate
@@ -77,10 +77,12 @@ async def me_permissions(user: User = Depends(get_current_user), db: AsyncSessio
         if view or edit:
             tab_perms[tab.key] = TabPermission(view=view, edit=edit)
 
+    global_defs_result = await db.execute(
+        select(PermissionDef.code).where(PermissionDef.scope_type == "global").order_by(PermissionDef.code)
+    )
     global_perms = {
-        "order.execute": await permission_service.has_global_permission(db, user, "order.execute"),
-        "admin.manage": await permission_service.has_global_permission(db, user, "admin.manage"),
-        "recipe.full_view": await permission_service.has_global_permission(db, user, "recipe.full_view"),
+        code: await permission_service.has_global_permission(db, user, code)
+        for code in global_defs_result.scalars().all()
     }
 
     return MePermissions(tabs=tab_perms, global_=global_perms, system_role=is_system)

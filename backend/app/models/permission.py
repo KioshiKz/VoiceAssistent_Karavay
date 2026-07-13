@@ -36,7 +36,14 @@ class RolePermission(Base):
             "(tab_id IS NULL AND folder_id IS NULL)",
             name="scope_matches_type",
         ),
-        UniqueConstraint("role_id", "permission_code", "tab_id", "folder_id", name="uq_role_perm_scope"),
+        UniqueConstraint(
+            "role_id",
+            "permission_code",
+            "tab_id",
+            "folder_id",
+            name="uq_role_perm_scope",
+            postgresql_nulls_not_distinct=True,
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
