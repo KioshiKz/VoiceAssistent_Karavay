@@ -52,10 +52,11 @@ async def create_product(
     return product
 
 
-async def _require_product_edit(db: AsyncSession, user: User, product: Product) -> None:
+async def _require_product_edit(db: AsyncSession, user: User, product: Product) -> Folder:
     folder = await folder_service.get_folder_or_404(db, product.folder_id)
     if not await permission_service.has_folder_permission(db, user, "folder.edit", folder):
         raise HTTPException(403, detail="permission_denied")
+    return folder
 
 
 async def _require_product_view(db: AsyncSession, user: User, product: Product) -> None:
@@ -157,8 +158,8 @@ async def create_step(
     user: User = Depends(get_current_user),
 ):
     product = await recipe_service.get_product_or_404(db, product_id)
-    await _require_product_edit(db, user, product)
-    step = await recipe_service.create_step(db, product_id, payload)
+    product_folder = await _require_product_edit(db, user, product)
+    step = await recipe_service.create_step(db, product_id, payload, target_folder=product_folder)
     return RecipeStepOut(**recipe_service.step_to_dict(step))
 
 

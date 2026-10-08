@@ -7,6 +7,9 @@ import { RecipeStepList } from "../components/RecipeStepList";
 import { UnitQuantityInput } from "../components/UnitQuantityInput";
 import { useDialog } from "../components/DialogProvider";
 import { FileWorkspaceShell } from "../components/FileWorkspaceShell";
+import { WeightCheckFields } from "../components/WeightCheckFields";
+import { serializeWeightSettings, weightCheckDefaults, weightCheckError } from "../utils/weightCheck";
+import { apiErrorMessage } from "../utils/apiError";
 
 type AddMode = "ingredient" | "event" | "ingredient_event" | null;
 
@@ -21,7 +24,8 @@ export function ProductEditor() {
   const [selectedIngredientId, setSelectedIngredientId] = useState("");
   const [ingredientQty, setIngredientQty] = useState(0);
   const [selectedEventId, setSelectedEventId] = useState("");
-  const [eventParams, setEventParams] = useState<Record<string, number | string>>({});
+  const [eventParams, setEventParams] = useState<Record<string, unknown>>({});
+  const [adding, setAdding] = useState(false);
 
   function reload() {
     if (!productId) return;
@@ -29,10 +33,10 @@ export function ProductEditor() {
       setProduct(nextProduct);
       ingredientsApi.listInFolder(nextProduct.folder_id).then(setIngredients);
       eventsApi.listInFolder(nextProduct.folder_id).then(setEvents);
-    });
+    }).catch((error) => alertMessage(apiErrorMessage(error, "Не удалось загрузить продукцию. Попробуйте открыть её снова.")));
   }
 
-  useEffect(reload, [productId]);
+  useEffect(reload, [productId, alertMessage]);
 
   if (!product) {
     return (
@@ -46,11 +50,16 @@ export function ProductEditor() {
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const needsIngredient = addMode === "ingredient" || addMode === "ingredient_event";
   const needsEvent = addMode === "event" || addMode === "ingredient_event";
+  const useIngredientWeight = addMode === "ingredient_event" && selectedIngredient?.measure_type === "weight" && eventParams.use_ingredient_weight !== false;
 
   async function saveHeader() {
     if (!product) return;
-    await productsApi.update(product.id, { name: product.name, base_quantity: product.base_quantity });
-    alertMessage("Сохранено");
+    try {
+      await productsApi.update(product.id, { name: product.name, base_quantity: product.base_quantity });
+      alertMessage("Сохранено");
+    } catch (error) {
+      alertMessage(apiErrorMessage(error, "Не удалось сохранить продукцию. Попробуйте ещё раз."));
+    }
   }
 
   function openStepModal(mode: Exclude<AddMode, null>) {
@@ -75,8 +84,9 @@ export function ProductEditor() {
     }
     if (selectedEvent.event_type === "weight_check") {
       return {
-        target_weight_g: Number(eventParams.target_weight_g ?? 0),
-        tolerance_g: Number(eventParams.tolerance_g ?? 0),
+        target_weight_g: useIngredientWeight ? ingredientQty : Number(eventParams.target_weight_g ?? 0),
+        use_ingredient_weight: useIngredientWeight,
+        ...serializeWeightSettings(eventParams),
       };
     }
     if (selectedEvent.event_type === "phrase_confirmation") {
@@ -140,14 +150,23 @@ export function ProductEditor() {
     reload();
   }
 
-  function submitStep() {
-    if (addMode === "ingredient") return addIngredientStep();
-    if (addMode === "event") return addEventStep();
-    return addLinkedStep();
+  async function submitStep() {
+    if (adding) return;
+    setAdding(true);
+    try {
+      if (addMode === "ingredient") await addIngredientStep();
+      else if (addMode === "event") await addEventStep();
+      else await addLinkedStep();
+    } catch (error) {
+      alertMessage(apiErrorMessage(error, "Не удалось добавить шаг. Проверьте параметры и попробуйте ещё раз."));
+    } finally {
+      setAdding(false);
+    }
   }
 
   const submitDisabled =
-    (needsIngredient && !selectedIngredientId) || (needsEvent && !selectedEventId) || (needsIngredient && !ingredientQty);
+    adding || (needsIngredient && !selectedIngredientId) || (needsEvent && !selectedEventId) || (needsIngredient && !ingredientQty) ||
+    (needsEvent && selectedEvent?.event_type === "weight_check" && !!weightCheckError({ ...eventParams, target_weight_g: useIngredientWeight ? ingredientQty : eventParams.target_weight_g }, true));
 
   return (
     <FileWorkspaceShell
@@ -265,7 +284,11 @@ export function ProductEditor() {
                 <>
                   <label className="modal-field">
                     Событие
-                    <select value={selectedEventId} onChange={(event) => setSelectedEventId(event.target.value)}>
+                    <select value={selectedEventId} onChange={(event) => {
+                      const nextEvent = events.find((item) => item.id === event.target.value);
+                      setSelectedEventId(event.target.value);
+                      setEventParams(nextEvent?.event_type === "weight_check" ? weightCheckDefaults(nextEvent.default_params) : {});
+                    }}>
                       <option value="">Выберите событие</option>
                       {events.map((event) => (
                         <option key={event.id} value={event.id}>
@@ -297,23 +320,32 @@ export function ProductEditor() {
 
                   {selectedEvent?.event_type === "weight_check" && (
                     <div className="modal-grid">
+                      {addMode === "ingredient_event" && (
+                        <label className="checkbox-line span-2">
+                          <input type="checkbox" checked={useIngredientWeight} disabled={selectedIngredient?.measure_type !== "weight"}
+                            onChange={(event) => setEventParams({ ...eventParams, use_ingredient_weight: event.target.checked })} />
+                          Использовать вес связанного ингредиента
+                        </label>
+                      )}
                       <label className="modal-field">
-                        Целевой вес, г
+                        Целевой вес на базовую партию, г
                         <input
                           type="number"
-                          value={Number(eventParams.target_weight_g ?? 0)}
+                          value={useIngredientWeight ? ingredientQty : Number(eventParams.target_weight_g ?? 0)}
+                          disabled={useIngredientWeight}
+                          min="0.001"
+                          step="any"
                           onChange={(event) => setEventParams({ ...eventParams, target_weight_g: event.target.value })}
                         />
                       </label>
-                      <label className="modal-field">
-                        Допуск, г
-                        <input
-                          type="number"
-                          value={Number(eventParams.tolerance_g ?? 0)}
-                          onChange={(event) => setEventParams({ ...eventParams, tolerance_g: event.target.value })}
-                        />
-                      </label>
+                      <WeightCheckFields params={eventParams} onChange={setEventParams} />
                     </div>
+                  )}
+
+                  {selectedEvent?.event_type === "weight_check" && (
+                    <p>Вес должен попасть в заданный диапазон и оставаться без изменений {String(eventParams.duration_seconds ?? 5)} сек.
+                      Целевой вес пересчитывается на количество в заявке. Колебания и потеря связи сбрасывают отсчёт.
+                      {eventParams.enforce_minimum_weight !== false && " Если итоговый вес меньше 10 г, защита заблокирует взвешивание."}</p>
                   )}
 
                   {selectedEvent?.event_type === "phrase_confirmation" && (
@@ -335,7 +367,7 @@ export function ProductEditor() {
               </button>
               <button className="primary" type="button" onClick={() => void submitStep()} disabled={submitDisabled}>
                 <Plus size={17} />
-                Добавить
+                {adding ? "Добавление..." : "Добавить"}
               </button>
             </div>
           </div>

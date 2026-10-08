@@ -12,9 +12,67 @@ from app.models.order import Order, OrderLine, OrderLineHistory
 from app.models.product import Product
 from app.models.recipe_step import RecipeStep
 from app.services.unit_conversion import quantize_quantity
+from app.services.scale_service import scale_service
+
+
+def execution_event_params(event_type: str | None, values: dict | None, multiplier: Decimal,
+                           ingredient_weight: Decimal | None = None) -> dict | None:
+    if event_type != "weight_check":
+        return values
+    params = dict(values or {})
+    if params.get("weight_target_basis") == "batch":
+        return params
+    if ingredient_weight is not None and params.get("use_ingredient_weight", True):
+        target = ingredient_weight
+        params["use_ingredient_weight"] = True
+    else:
+        base = Decimal(str(params.get("target_weight_g", 0)))
+        params["target_weight_base_g"] = float(base)
+        target = quantize_quantity(base * multiplier)
+    params["target_weight_g"] = float(target)
+    params["weight_target_basis"] = "batch"
+    return params
+
+
+def normalize_plan_weight_targets(plan: ExecutionPlan) -> bool:
+    changed = False
+    target_changed = False
+    for step in plan.steps:
+        if step.status == "done" or step.event_type_snapshot != "weight_check":
+            continue
+        linked_weight = step.quantity_canonical_computed if getattr(step, "step_type", None) == "ingredient_event" and getattr(step, "measure_type_snapshot", None) == "weight" else None
+        params = execution_event_params(step.event_type_snapshot, step.event_params_snapshot,
+                                       Decimal(str(getattr(plan, "multiplier", 1))), linked_weight)
+        if params != step.event_params_snapshot:
+            target_changed = target_changed or params.get("target_weight_g") != (step.event_params_snapshot or {}).get("target_weight_g")
+            step.event_params_snapshot = params
+            changed = True
+    if target_changed:
+        scale_service.reset_plan(str(plan.id))
+    return changed
 
 
 async def get_or_create_execution_plan(db: AsyncSession, order_line_id: uuid.UUID) -> ExecutionPlan:
+    line_ref = await db.get(OrderLine, order_line_id)
+    if line_ref is None:
+        raise HTTPException(404, detail="order_line_not_found")
+    if line_ref.emergency_schedule_id is not None and (
+        not line_ref.emergency_active or line_ref.emergency_action == "remove"
+    ):
+        raise HTTPException(409, detail="emergency_order_line_not_executable")
+    if line_ref.emergency_schedule_id is None:
+        overlay_id = await db.scalar(
+            select(OrderLine.id)
+            .where(
+                OrderLine.emergency_source_line_id == line_ref.id,
+                OrderLine.emergency_active.is_(True),
+                OrderLine.emergency_action.in_(("replace", "remove")),
+            )
+            .limit(1)
+        )
+        if overlay_id is not None:
+            raise HTTPException(409, detail="order_line_replaced_by_emergency_schedule")
+
     result = await db.execute(
         select(ExecutionPlan)
         .where(ExecutionPlan.order_line_id == order_line_id)
@@ -22,11 +80,10 @@ async def get_or_create_execution_plan(db: AsyncSession, order_line_id: uuid.UUI
     )
     existing = result.scalar_one_or_none()
     if existing is not None:
+        if normalize_plan_weight_targets(existing):
+            await db.commit()
         return existing
 
-    line_ref = await db.get(OrderLine, order_line_id)
-    if line_ref is None:
-        raise HTTPException(404, detail="order_line_not_found")
     order_result = await db.execute(
         select(Order)
         .where(Order.id == line_ref.order_id)
@@ -57,6 +114,8 @@ async def get_or_create_execution_plan(db: AsyncSession, order_line_id: uuid.UUI
     )
     existing = existing_result.scalar_one_or_none()
     if existing is not None:
+        if normalize_plan_weight_targets(existing):
+            await db.commit()
         return existing
     if order_line.status == "cancelled":
         raise HTTPException(409, detail="order_line_cancelled")
@@ -97,7 +156,9 @@ async def get_or_create_execution_plan(db: AsyncSession, order_line_id: uuid.UUI
             if step.step_type == "ingredient_event":
                 plan_step.event_name_snapshot = step.event_template.name
                 plan_step.event_type_snapshot = step.event_template.event_type
-                plan_step.event_params_snapshot = step.event_params
+                plan_step.event_params_snapshot = execution_event_params(
+                    step.event_template.event_type, step.event_params, multiplier,
+                    computed if step.ingredient.measure_type == "weight" else None)
             db.add(plan_step)
         else:
             db.add(
@@ -107,7 +168,7 @@ async def get_or_create_execution_plan(db: AsyncSession, order_line_id: uuid.UUI
                     step_type="event",
                     event_name_snapshot=step.event_template.name,
                     event_type_snapshot=step.event_template.event_type,
-                    event_params_snapshot=step.event_params,
+                    event_params_snapshot=execution_event_params(step.event_template.event_type, step.event_params, multiplier),
                 )
             )
 
@@ -197,12 +258,18 @@ async def advance_step(db: AsyncSession, plan_id: uuid.UUID, actor_id: uuid.UUID
     if order_line.status == "cancelled":
         raise HTTPException(409, detail="order_line_cancelled")
 
+    normalize_plan_weight_targets(plan)
     sorted_steps = sorted(plan.steps, key=lambda step: step.order_index)
     current_step = (
         sorted_steps[plan.current_step_index]
         if 0 <= plan.current_step_index < len(sorted_steps)
         else None
     )
+    weight_verification = None
+    if current_step is not None and current_step.event_type_snapshot == "weight_check":
+        weight_verification = scale_service.require_ready(
+            str(plan.id), plan.current_step_index, current_step.event_params_snapshot
+        )
     if current_step is not None:
         current_step.status = "done"
         current_step.completed_at = datetime.datetime.now(datetime.timezone.utc)
@@ -218,11 +285,15 @@ async def advance_step(db: AsyncSession, plan_id: uuid.UUID, actor_id: uuid.UUID
             actor_id,
             "advance",
             old_value={"current_step_index": plan.current_step_index - 1},
-            new_value={"current_step_index": plan.current_step_index, "status": order_line.status},
+            new_value={
+                "current_step_index": plan.current_step_index, "status": order_line.status,
+                **({"weight_verification": weight_verification} if weight_verification else {}),
+            },
         )
     )
 
     await db.commit()
+    scale_service.reset_plan(str(plan.id))
     await db.refresh(plan)
     return plan
 
@@ -277,5 +348,6 @@ async def rewind_step(db: AsyncSession, plan_id: uuid.UUID, actor_id: uuid.UUID 
     )
 
     await db.commit()
+    scale_service.reset_plan(str(plan.id))
     await db.refresh(plan)
     return plan

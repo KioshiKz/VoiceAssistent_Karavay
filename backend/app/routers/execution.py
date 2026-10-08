@@ -1,7 +1,9 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.permissions import require_permission
 from app.db.session import get_db
@@ -10,6 +12,7 @@ from app.models.user import User
 from app.schemas.execution import ExecutionPlanOut, ExecutionPlanStepOut
 from app.services import execution_service, order_access_service, permission_service
 from app.services.unit_conversion import format_compound
+from app.services.scale_service import scale_service
 
 router = APIRouter(prefix="/api", tags=["execution"])
 
@@ -87,6 +90,30 @@ async def advance(
     plan = await execution_service.advance_step(db, plan_id, user.id)
     can_view_full_recipe = await permission_service.has_global_permission(db, user, "recipe.full_view")
     return _plan_to_out(plan, can_view_full_recipe)
+
+
+@router.get("/execution-plans/{plan_id}/weight-status")
+async def weight_status(
+    plan_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("order.execute")),
+):
+    result = await db.execute(
+        select(ExecutionPlan).where(ExecutionPlan.id == plan_id).options(selectinload(ExecutionPlan.steps))
+    )
+    plan = result.scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(404, detail="execution_plan_not_found")
+    await order_access_service.require_line_permission(db, user, plan.order_line_id, "folder.view")
+    steps = sorted(plan.steps, key=lambda step: step.order_index)
+    if plan.status == "completed" or not 0 <= plan.current_step_index < len(steps):
+        raise HTTPException(409, detail="Нет активного шага взвешивания.")
+    step = steps[plan.current_step_index]
+    if step.event_type_snapshot != "weight_check":
+        raise HTTPException(409, detail="Текущий шаг не является взвешиванием.")
+    if execution_service.normalize_plan_weight_targets(plan):
+        await db.commit()
+    return scale_service.check(str(plan.id), plan.current_step_index, step.event_params_snapshot)
 
 
 @router.post(

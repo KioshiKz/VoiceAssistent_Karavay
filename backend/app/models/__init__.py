@@ -8,6 +8,7 @@ from app.models.product import Product
 from app.models.recipe_step import RecipeStep
 from app.models.order import CurrentOrderSelection, Order, OrderLine, OrderLineHistory
 from app.models.execution import ExecutionPlan, ExecutionPlanStep
+from app.models.emergency import EmergencySchedule, EmergencyScheduleHistory
 
 __all__ = [
     "User",
@@ -27,4 +28,6 @@ __all__ = [
     "OrderLineHistory",
     "ExecutionPlan",
     "ExecutionPlanStep",
+    "EmergencySchedule",
+    "EmergencyScheduleHistory",
 ]

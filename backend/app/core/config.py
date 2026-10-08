@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:5173"
     initial_admin_email: str = "admin@karavay.app"
     initial_admin_password: str = "change-me-now"
+    scale_port: str = "auto"
+    scale_baudrate: int = 9600
 
 
 settings = Settings()

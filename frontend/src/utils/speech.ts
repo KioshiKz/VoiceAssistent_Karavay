@@ -6,6 +6,12 @@ let currentAudioUrl: string | null = null;
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 let requestSequence = 0;
 
+function emitSpeaking(active: boolean) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("assistant-speaking", { detail: { active } }));
+  }
+}
+
 function stopCurrentPlayback() {
   if (currentAudio) {
     currentAudio.pause();
@@ -21,6 +27,7 @@ function stopCurrentPlayback() {
     window.speechSynthesis.cancel();
   }
   currentUtterance = null;
+  emitSpeaking(false);
 }
 
 function speakWithBrowser(text: string): boolean {
@@ -46,19 +53,22 @@ function speakWithBrowser(text: string): boolean {
   utterance.pitch = 1;
   utterance.onend = () => {
     if (currentUtterance === utterance) currentUtterance = null;
+    emitSpeaking(false);
   };
   utterance.onerror = () => {
     if (currentUtterance === utterance) currentUtterance = null;
+    emitSpeaking(false);
   };
 
   currentUtterance = utterance;
+  emitSpeaking(true);
   synthesis.speak(utterance);
   return true;
 }
 
 function shouldUseBrowserFallback(error: unknown): boolean {
   if (!isAxiosError(error)) return true;
-  return error.response?.status === 503;
+  return !error.response || error.response.status >= 500;
 }
 
 export async function speak(text: string): Promise<void> {
@@ -82,11 +92,14 @@ export async function speak(text: string): Promise<void> {
         URL.revokeObjectURL(url);
         currentAudioUrl = null;
       }
+      emitSpeaking(false);
     };
     audio.onended = releaseAudio;
     audio.onerror = releaseAudio;
+    emitSpeaking(true);
     await audio.play();
   } catch (error) {
+    emitSpeaking(false);
     if (sequence === requestSequence && shouldUseBrowserFallback(error)) {
       speakWithBrowser(clean);
     }

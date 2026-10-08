@@ -8,4 +8,10 @@ export const HISTORY_LABELS: Record<string, string> = {
   advance: "Выполнен следующий шаг",
   rewind: "Возврат к предыдущему шагу",
   force_complete: "Заявка завершена принудительно",
+  emergency_schedule_started: "Включён экстренный режим",
+  emergency_item_added: "Экстренно добавлена продукция",
+  emergency_quantity_replaced: "Экстренно изменено количество",
+  emergency_item_removed: "Позиция экстренно исключена",
+  emergency_item_updated: "Экстренная позиция изменена",
+  emergency_item_restored: "Экстренное изменение отменено",
 };

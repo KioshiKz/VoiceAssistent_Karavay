@@ -10,6 +10,7 @@ import {
   Mic,
   MicOff,
   ShieldCheck,
+  ChartNoAxesCombined,
   Users,
 } from "lucide-react";
 import { foldersApi } from "../api/endpoints";
@@ -57,6 +58,13 @@ const NAV_ITEMS = [
     label: "Текущая заявка",
     icon: ClipboardList,
     canShow: (hasTabView: (key: string) => boolean) => hasTabView("current_order"),
+  },
+  {
+    to: "/statistics",
+    label: "Статистика",
+    icon: ChartNoAxesCombined,
+    canShow: (_hasTabView: (key: string) => boolean, hasGlobal: (code: string) => boolean) =>
+      hasGlobal("statistics.view") || hasGlobal("admin.manage"),
   },
   {
     to: "/execution",

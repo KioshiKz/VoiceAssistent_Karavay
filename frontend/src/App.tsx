@@ -14,6 +14,8 @@ import { OrdersLanding } from "./pages/OrdersLanding";
 import { ExecutionView } from "./pages/ExecutionView";
 import { ExecutionQueue } from "./pages/ExecutionQueue";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
+import { EmergencySchedule } from "./pages/EmergencySchedule";
+import { Statistics } from "./pages/Statistics";
 
 function App() {
   return (
@@ -128,6 +130,22 @@ function App() {
         element={
           <ProtectedRoute tabView="orders_list">
             <Navigate to="/orders" replace />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders/:orderId/emergency"
+        element={
+          <ProtectedRoute globalCode="emergency.manage">
+            <EmergencySchedule />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/statistics"
+        element={
+          <ProtectedRoute globalCode="statistics.view">
+            <Statistics />
           </ProtectedRoute>
         }
       />

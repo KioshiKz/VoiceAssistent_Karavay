@@ -11,6 +11,9 @@ import { useDialog } from "../components/DialogProvider";
 import { buildFolderTree } from "../utils/folderTree";
 import { ConsoleShell } from "../components/ConsoleShell";
 import { contentItemKey, type ContentSelectionItem } from "../utils/contentSelection";
+import { WeightCheckFields } from "../components/WeightCheckFields";
+import { serializeWeightSettings, weightCheckDefaults, weightCheckError } from "../utils/weightCheck";
+import { apiErrorMessage } from "../utils/apiError";
 
 type CreateKind = "folder" | "ingredient" | "product" | "event";
 
@@ -21,6 +24,7 @@ interface CreateFormState {
   containerWeights: string;
   baseQuantity: number;
   eventType: EventType;
+  eventParams: Record<string, unknown>;
   isActive: boolean;
 }
 
@@ -53,6 +57,7 @@ function initialCreateForm(): CreateFormState {
     containerWeights: "",
     baseQuantity: 100,
     eventType: "timer",
+    eventParams: weightCheckDefaults(),
     isActive: true,
   };
 }
@@ -243,6 +248,10 @@ export function FileManager() {
   async function handleCreateSubmit(event: FormEvent) {
     event.preventDefault();
     if (!createKind || !createForm.name.trim()) return;
+    if (createKind === "event" && createForm.eventType === "weight_check") {
+      const validation = weightCheckError(createForm.eventParams);
+      if (validation) { alertMessage(validation); return; }
+    }
 
     setCreating(true);
     try {
@@ -276,12 +285,15 @@ export function FileManager() {
           name: createForm.name.trim(),
           description: createForm.description.trim() || null,
           event_type: createForm.eventType,
+          default_params: createForm.eventType === "weight_check" ? serializeWeightSettings(createForm.eventParams) : null,
           is_active: createForm.isActive,
         });
         reloadContent();
       }
 
       setCreateKind(null);
+    } catch (error) {
+      alertMessage(apiErrorMessage(error, "Не удалось создать. Проверьте параметры и попробуйте ещё раз."));
     } finally {
       setCreating(false);
     }
@@ -564,6 +576,13 @@ export function FileManager() {
                       ))}
                     </select>
                   </label>
+                  {createForm.eventType === "weight_check" && (
+                    <>
+                      <WeightCheckFields params={createForm.eventParams}
+                        onChange={(eventParams) => setCreateForm((prev) => ({ ...prev, eventParams }))} />
+                      <p className="muted span-2">Допуски отсчитываются вниз и вверх от целевого веса. Целевой вес задаётся в шаге рецептуры.</p>
+                    </>
+                  )}
                   <label className="modal-field span-2">
                     Описание
                     <textarea

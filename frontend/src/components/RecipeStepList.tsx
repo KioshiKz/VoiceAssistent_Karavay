@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, BellRing, Trash2, Wheat, Workflow } from "lucide-react";
 import type { RecipeStepOut } from "../api/types";
+import { weightCheckSummary } from "../utils/weightCheck";
 
 interface RecipeStepListProps {
   steps: RecipeStepOut[];
@@ -18,7 +19,7 @@ function eventSummary(step: RecipeStepOut): string {
     return `таймер ${minutes ? `${minutes} мин ` : ""}${rest} сек, фраза: ${phrase}`;
   }
   if (step.event_template?.event_type === "weight_check") {
-    return `проверка веса: ${params.target_weight_g ?? "?"} г ± ${params.tolerance_g ?? 0} г`;
+    return `проверка веса: ${weightCheckSummary(params)}`;
   }
   if (step.event_template?.event_type === "phrase_confirmation") {
     return `подтвердить фразой: «${params.phrase ?? ""}»`;

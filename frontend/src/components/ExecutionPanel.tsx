@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isAxiosError } from "axios";
 import {
   ArrowLeft,
   ArrowRight,
@@ -12,8 +13,10 @@ import {
   Wheat,
 } from "lucide-react";
 import { executionApi } from "../api/endpoints";
-import type { ExecutionPlanOut, ExecutionPlanStepOut } from "../api/types";
+import type { ExecutionPlanOut, ExecutionPlanStepOut, OrderLineOut, WeightStatusOut } from "../api/types";
 import { speak } from "../utils/speech";
+import { weightCheckSummary } from "../utils/weightCheck";
+import { stepSpeech } from "../utils/executionSpeech";
 
 const ACTIVE_TIMER_KEY = "karavay.activeExecutionTimer";
 const COMPLETED_TIMERS_KEY = "karavay.completedExecutionTimers";
@@ -27,8 +30,10 @@ interface ActiveTimer {
 
 interface ExecutionPanelProps {
   orderLineId: string | null;
+  orderLine?: OrderLineOut | null;
   fullscreen?: boolean;
   onFullscreenChange?: (next: boolean) => void;
+  onCompleted?: (orderLineId: string) => void;
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -65,6 +70,7 @@ function confirmationPhrase(step: ExecutionPlanStepOut | undefined) {
 function stepTitle(step: ExecutionPlanStepOut) {
   if (step.step_type === "ingredient") return step.ingredient_name_snapshot ?? "Ингредиент";
   if (step.step_type === "ingredient_event") return `Постепенно добавить: ${step.ingredient_name_snapshot ?? "ингредиент"}`;
+  if (step.event_type_snapshot === "weight_check") return "Взвешивание";
   return step.event_name_snapshot ?? "Событие";
 }
 
@@ -75,13 +81,24 @@ function stepDetails(step: ExecutionPlanStepOut) {
     return `кодовая фраза: ${params(step).phrase ?? ""}`;
   }
   if (step.event_type_snapshot === "weight_check") {
-    return "проверка веса пока не подключена";
+    return weightCheckSummary(params(step));
   }
   return step.quantity_display ?? "";
 }
 
 function stepKey(plan: ExecutionPlanOut, step: ExecutionPlanStepOut) {
   return `${plan.id}:${step.order_index}`;
+}
+
+function stepAnnouncement(step: ExecutionPlanStepOut) {
+  const description = stepSpeech(step);
+  if (step.event_type_snapshot === "timer") {
+    return `${description} Для запуска скажите: помощник, ${timerStartPhrase(step)}.`;
+  }
+  if (step.event_type_snapshot === "phrase_confirmation") {
+    return `${description} Для подтверждения скажите: помощник, ${confirmationPhrase(step)}.`;
+  }
+  return description;
 }
 
 type TimerCue = "start" | "tick" | "done";
@@ -128,30 +145,13 @@ function playTimerCue(cue: TimerCue) {
   }
 }
 
-function stepSpeech(step: ExecutionPlanStepOut, stepNumber: number, totalSteps: number) {
-  const base = `Шаг ${stepNumber} из ${totalSteps}`;
-  if (step.step_type === "ingredient") {
-    return `${base}, ${step.ingredient_name_snapshot ?? "ингредиент"}, ${step.quantity_display ?? ""}.`;
-  }
-  if (step.step_type === "ingredient_event") {
-    return `${base}, ${step.ingredient_name_snapshot ?? "ингредиент"}, постепенно ${
-      step.quantity_display ?? ""
-    }. ${stepDetails(step)}.`;
-  }
-  if (step.event_type_snapshot === "timer") {
-    return `${base}. ${step.event_name_snapshot ?? "Событие"}. Для запуска таймера скажите ${timerStartPhrase(step)}.`;
-  }
-  if (step.event_type_snapshot === "phrase_confirmation") {
-    return `${base}. ${step.event_name_snapshot ?? "Событие"}. Скажите кодовую фразу ${confirmationPhrase(step)}.`;
-  }
-  return `${base}. ${stepTitle(step)}.`;
-}
-
-export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenChange }: ExecutionPanelProps) {
+export function ExecutionPanel({ orderLineId, orderLine, fullscreen = false, onFullscreenChange, onCompleted }: ExecutionPanelProps) {
   const [plan, setPlan] = useState<ExecutionPlanOut | null>(null);
   const [loading, setLoading] = useState(false);
   const [advancing, setAdvancing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [weightStatus, setWeightStatus] = useState<{ key: string; status: WeightStatusOut; receivedAt: number } | null>(null);
+  const [weightError, setWeightError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [activeTimer, setActiveTimerState] = useState<ActiveTimer | null>(() => readJson(ACTIVE_TIMER_KEY, null));
   const [completedTimers, setCompletedTimers] = useState<string[]>(() => readJson(COMPLETED_TIMERS_KEY, []));
@@ -159,6 +159,9 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
   const announcedStepKeyRef = useRef<string | null>(null);
   const lastTickRef = useRef<number | null>(null);
   const lastSpokenTextRef = useRef<string>("");
+  const announcedWeightReadyRef = useRef<string | null>(null);
+  const completedLineRef = useRef<string | null>(null);
+  const spokenErrorRef = useRef<string | null>(null);
 
   useEffect(() => {
     announcedStepKeyRef.current = null;
@@ -205,6 +208,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
   useEffect(() => {
     if (!activeTimer || activeTimer.endsAt > now) return;
     playTimerCue("done");
+    void speak("Таймер завершён. Скажите: помощник, дальше.");
     rememberCompletedTimer(activeTimer.key);
     setActiveTimer(null);
   }, [activeTimer, now, rememberCompletedTimer, setActiveTimer]);
@@ -212,15 +216,74 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
   const currentStep = plan?.steps[plan.current_step_index];
   const currentStepKey = plan && currentStep ? stepKey(plan, currentStep) : null;
   const totalSteps = plan?.total_steps ?? plan?.steps.length ?? 0;
-  const currentStepNumber = plan ? Math.min(plan.current_step_index + 1, totalSteps) : 0;
   const isTimerStep = currentStep?.event_type_snapshot === "timer";
   const isPhraseStep = currentStep?.event_type_snapshot === "phrase_confirmation";
+  const isWeightStep = currentStep?.event_type_snapshot === "weight_check";
+  const currentWeight = weightStatus?.key === currentStepKey ? weightStatus : null;
+  const weightFresh = !!currentWeight && Date.now() - currentWeight.receivedAt < 1500;
+  const weightBlocked = isWeightStep && !(weightFresh && currentWeight?.status.ready);
   const timerDone = !!currentStepKey && completedTimers.includes(currentStepKey);
   const phraseConfirmed = !!currentStepKey && confirmedPhrases.includes(currentStepKey);
   const timerBlocked = !!currentStep && isTimerStep && !timerDone;
   const phraseBlocked = !!currentStep && isPhraseStep && !phraseConfirmed;
   const activeRemaining = activeTimer ? Math.max(0, Math.ceil((activeTimer.endsAt - now) / 1000)) : 0;
   const hiddenFutureSteps = plan ? Math.max(0, plan.total_steps - plan.steps.length) : 0;
+  const requiredWeightSeconds = currentWeight?.status.required_seconds ?? Number(params(currentStep).duration_seconds ?? 5);
+  const targetWeight = currentWeight?.status.target_weight_g ?? Number(params(currentStep).target_weight_g ?? 0);
+
+  useEffect(() => {
+    if (!currentStepKey || !weightFresh || !currentWeight?.status.ready) return;
+    if (announcedWeightReadyRef.current === currentStepKey) return;
+    announcedWeightReadyRef.current = currentStepKey;
+    void speak("Вес подтверждён. Скажите: помощник, дальше.");
+  }, [currentStepKey, currentWeight?.status.ready, weightFresh]);
+
+  useEffect(() => {
+    if (!error || spokenErrorRef.current === error) return;
+    spokenErrorRef.current = error;
+    void speak(`Ошибка. ${error}`);
+  }, [error]);
+
+  useEffect(() => {
+    if (!plan || plan.status !== "completed" || !orderLineId || completedLineRef.current === orderLineId) return;
+    completedLineRef.current = orderLineId;
+    void speak("Позиция выполнена.");
+    const timeout = window.setTimeout(() => onCompleted?.(orderLineId), 1200);
+    return () => window.clearTimeout(timeout);
+  }, [onCompleted, orderLineId, plan]);
+
+  useEffect(() => {
+    setWeightStatus(null);
+    setWeightError(null);
+    if (!plan || !currentStepKey || !isWeightStep || plan.status === "completed") return;
+    const planId = plan.id;
+    const stepIndex = plan.current_step_index;
+    let cancelled = false;
+    let timeout: number | undefined;
+    async function poll() {
+      try {
+        const status = await executionApi.weightStatus(planId);
+        if (!cancelled && status.step_index === stepIndex) {
+          setWeightStatus({ key: currentStepKey!, status, receivedAt: Date.now() });
+          setWeightError(null);
+        } else if (!cancelled) {
+          setWeightStatus(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setWeightStatus(null);
+          const detail = isAxiosError(err) ? err.response?.data?.detail : null;
+          setWeightError(typeof detail === "string" ? detail : "Нет связи с сервером весов.");
+        }
+      }
+      if (!cancelled) timeout = window.setTimeout(() => void poll(), 300);
+    }
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [plan, currentStepKey, isWeightStep]);
 
   const progressText = useMemo(() => {
     if (!plan) return "";
@@ -232,10 +295,10 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     if (!plan || !currentStep || !currentStepKey || plan.status === "completed") return;
     if (announcedStepKeyRef.current === currentStepKey) return;
     announcedStepKeyRef.current = currentStepKey;
-    const text = stepSpeech(currentStep, currentStepNumber, totalSteps);
+    const text = stepAnnouncement(currentStep);
     lastSpokenTextRef.current = text;
     void speak(text);
-  }, [currentStep, currentStepKey, currentStepNumber, plan, totalSteps]);
+  }, [currentStep, currentStepKey, plan]);
 
   useEffect(() => {
     if (!activeTimer || activeRemaining <= 0) {
@@ -259,10 +322,12 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
       return true;
     }
     playTimerCue("start");
+    const startedAt = Date.now();
+    setNow(startedAt);
     setActiveTimer({
       key: currentStepKey,
       label: stepTitle(currentStep),
-      endsAt: Date.now() + duration * 1000,
+      endsAt: startedAt + duration * 1000,
     });
     setError(null);
     return true;
@@ -281,7 +346,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     return true;
   }, [activeTimer, setActiveTimer]);
 
-  const canAdvance = !!plan && !advancing && plan.status !== "completed" && !timerBlocked && !phraseBlocked;
+  const canAdvance = !!plan && !advancing && plan.status !== "completed" && !timerBlocked && !phraseBlocked && !weightBlocked;
   const canRewind = !!plan && !advancing && plan.current_step_index > 0;
 
   const advance = useCallback(async () => {
@@ -294,17 +359,23 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
       setError("Скажите кодовую фразу, указанную на экране.");
       return;
     }
+    if (weightBlocked) {
+      setError("Дождитесь завершения проверки веса без колебаний.");
+      return;
+    }
     setAdvancing(true);
     try {
       const updated = await executionApi.advance(plan.id);
       setPlan(updated);
       setError(null);
-    } catch {
-      setError("Не удалось перейти к следующему шагу.");
+    } catch (err) {
+      const detail = isAxiosError(err) ? err.response?.data?.detail : null;
+      setError(typeof detail === "string" ? detail : "Не удалось перейти к следующему шагу.");
+      if (isWeightStep) setWeightStatus(null);
     } finally {
       setAdvancing(false);
     }
-  }, [activeTimer?.key, advancing, currentStepKey, phraseBlocked, plan, timerBlocked]);
+  }, [activeTimer?.key, advancing, currentStepKey, phraseBlocked, plan, timerBlocked, weightBlocked, isWeightStep]);
 
   const rewind = useCallback(async () => {
     if (!plan || advancing || plan.current_step_index <= 0) return;
@@ -350,7 +421,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
         const text =
           plan.status === "completed" || !currentStep || !currentStepKey
             ? "Все шаги выполнены."
-            : stepSpeech(currentStep, currentStepNumber, totalSteps);
+            : stepAnnouncement(currentStep);
         lastSpokenTextRef.current = text;
         announcedStepKeyRef.current = currentStepKey;
         void speak(text);
@@ -384,7 +455,6 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     confirmPhrase,
     currentStep,
     currentStepKey,
-    currentStepNumber,
     isPhraseStep,
     isTimerStep,
     onFullscreenChange,
@@ -392,7 +462,6 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
     rewind,
     startTimer,
     stopTimer,
-    totalSteps,
   ]);
 
   if (!orderLineId) {
@@ -409,25 +478,37 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
 
   return (
     <div className={`execution-panel${fullscreen ? " fullscreen" : ""}`}>
-      {activeTimer &&
-        activeRemaining > 0 &&
-        (fullscreen ? (
-          <section className="timer-fullscreen">
-            <Clock3 size={58} />
-            <strong>{formatDuration(activeRemaining)}</strong>
-            <span>{activeTimer.label}</span>
-          </section>
-        ) : (
-          <div className="timer-widget">
-            <Clock3 size={17} />
-            <strong>{formatDuration(activeRemaining)}</strong>
-            <span>{activeTimer.label}</span>
+      {isWeightStep && plan.status !== "completed" ? (
+        <section className={`execution-instrument weight-instrument${currentWeight?.status.minimum_weight_blocked ? " blocked" : ""}`} aria-label="Взвешивание">
+          <div className="instrument-heading">Взвешивание</div>
+          <div className="weight-readings">
+            <div><span>Необходимо</span><strong>{targetWeight} <small>г</small></strong></div>
+            <div><span>На весах</span><strong>{weightFresh && currentWeight?.status.weight_g != null ? currentWeight.status.weight_g : "—"} <small>г</small></strong></div>
           </div>
-        ))}
+          <div className="weight-hold-progress">
+            <progress max={requiredWeightSeconds} value={weightFresh ? currentWeight?.status.held_seconds ?? 0 : 0} aria-label="Длительность стабильного веса" />
+            <span>{(weightFresh ? currentWeight?.status.held_seconds ?? 0 : 0).toFixed(1)} / {requiredWeightSeconds} сек</span>
+          </div>
+          <div className="instrument-message" role="status" aria-live="polite">{weightError ?? (weightFresh ? currentWeight?.status.message : "Ожидание данных от весов...")}</div>
+          {weightFresh && currentWeight && <div className="instrument-range">Допустимый вес: {currentWeight.status.minimum_weight_g}–{currentWeight.status.maximum_weight_g} г</div>}
+        </section>
+      ) : (isTimerStep && plan.status !== "completed") || (activeTimer && activeRemaining > 0) ? (
+        <section className="execution-instrument timer-instrument" aria-label="Таймер">
+          <div className="instrument-heading"><Clock3 size={24} /> Таймер</div>
+          <strong className="instrument-time">{formatDuration(activeTimer && activeRemaining > 0 ? activeRemaining : timerDone ? 0 : timerDuration(currentStep))}</strong>
+          <div className="instrument-message">{timerDone ? "Таймер завершён" : activeTimer && activeRemaining > 0 ? "До завершения" : "Готов к запуску"}</div>
+        </section>
+      ) : null}
 
       <div className="execution-toolbar">
         <div>
-          <p className="eyebrow">Выполнение заявки</p>
+          <p className="eyebrow">{orderLine?.is_emergency ? "Экстренная позиция" : "Выполнение заявки"}</p>
+          {orderLine && (
+            <div className="execution-order-identity">
+              <strong>{orderLine.product_name_raw}</strong>
+              <span>{orderLine.quantity} шт. · {orderLine.due_time.slice(0, 5)}</span>
+            </div>
+          )}
           <h2>{progressText}</h2>
         </div>
         <div className="action-row">
@@ -446,7 +527,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
             Вернуться
           </button>
           {plan.status !== "completed" && (
-            <button className="primary" type="button" onClick={advance} disabled={advancing || timerBlocked || phraseBlocked}>
+            <button className="primary" type="button" onClick={advance} disabled={!canAdvance}>
               <ArrowRight size={16} />
               Дальше
             </button>
@@ -454,6 +535,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
         </div>
       </div>
 
+      <div className="execution-content">
       <div className="execution-progress">
         {Array.from({ length: totalSteps }).map((_, idx) => (
           <span
@@ -470,7 +552,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
           <div className="step-name">Все шаги выполнены</div>
         </section>
       ) : currentStep ? (
-        <section className="execution-step-card">
+        <section className={`execution-step-card${isWeightStep && currentStep.step_type !== "ingredient_event" ? " weight-step-card" : ""}`}>
           <div className="step-kind">
             {currentStep.step_type === "ingredient" ? "Ингредиент" : currentStep.step_type === "ingredient_event" ? "Связанное действие" : "Событие"}
           </div>
@@ -484,7 +566,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
           {isTimerStep && (
             <div className="execution-code-panel">
               <span>Кодовая фраза</span>
-              <strong>{timerStartPhrase(currentStep)}</strong>
+              <strong>помощник, {timerStartPhrase(currentStep)}</strong>
               <button type="button" onClick={startTimer} disabled={timerDone || activeTimer?.key === currentStepKey}>
                 <Play size={16} />
                 Старт
@@ -495,13 +577,14 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
           {isPhraseStep && (
             <div className="execution-code-panel">
               <span>Кодовая фраза</span>
-              <strong>{confirmationPhrase(currentStep)}</strong>
+              <strong>помощник, {confirmationPhrase(currentStep)}</strong>
               <button type="button" onClick={confirmPhrase} disabled={phraseConfirmed}>
                 <CheckCircle2 size={16} />
                 Подтвердить
               </button>
             </div>
           )}
+
         </section>
       ) : (
         <section className="execution-step-card">
@@ -527,6 +610,7 @@ export function ExecutionPanel({ orderLineId, fullscreen = false, onFullscreenCh
             <small>Откроется после выполнения текущего шага</small>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

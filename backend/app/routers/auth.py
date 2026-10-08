@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+import uuid
+
+import jwt
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
-from app.core.security import create_access_token, create_refresh_token, verify_password
+from app.core.security import create_access_token, create_refresh_token, decode_token, verify_password
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.permission import AppTab, PermissionDef, RolePermission
 from app.models.role import UserRole
@@ -24,7 +28,7 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
     access_token, expires_in = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
     response.set_cookie(
-        "refresh_token", refresh_token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 7
+        "refresh_token", refresh_token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * settings.jwt_refresh_ttl_days
     )
     return TokenResponse(
         access_token=access_token,
@@ -34,10 +38,23 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
 
 
 @router.post("/auth/refresh", response_model=TokenResponse)
-async def refresh(response: Response, db: AsyncSession = Depends(get_db)):
-    # Placeholder for MVP: refresh-token cookie parsing is wired the same way as
-    # get_current_user's access-token check, decoded separately here.
-    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, detail="not_implemented_yet")
+async def refresh(response: Response, db: AsyncSession = Depends(get_db), refresh_token: str | None = Cookie(default=None)):
+    if not refresh_token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="refresh_token_missing")
+    try:
+        payload = decode_token(refresh_token)
+        if payload.get("type") != "refresh":
+            raise ValueError("invalid token type")
+        user_id = uuid.UUID(payload["sub"])
+    except (jwt.PyJWTError, KeyError, ValueError) as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid_refresh_token") from exc
+    user = await db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="user_inactive_or_not_found")
+    access_token, expires_in = create_access_token(user.id)
+    response.set_cookie("refresh_token", create_refresh_token(user.id), httponly=True,
+                        samesite="lax", max_age=60 * 60 * 24 * settings.jwt_refresh_ttl_days)
+    return TokenResponse(access_token=access_token, expires_in=expires_in, user=UserOut.model_validate(user))
 
 
 @router.post("/auth/logout")

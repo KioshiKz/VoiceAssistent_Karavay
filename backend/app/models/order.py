@@ -2,6 +2,7 @@ import uuid
 from datetime import date, datetime, time
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -81,7 +82,17 @@ class OrderLine(Base):
         CheckConstraint("quantity > 0", name="quantity_positive"),
         CheckConstraint("match_status IN ('matched','unmatched')", name="match_status_valid"),
         CheckConstraint("status IN ('pending','in_progress','completed','cancelled')", name="order_line_status_valid"),
+        CheckConstraint(
+            "emergency_action IS NULL OR emergency_action IN ('add','replace','remove')",
+            name="emergency_action_valid",
+        ),
         Index("ix_order_lines_order_id_status", "order_id", "status"),
+        Index("ix_order_lines_emergency_schedule_active", "emergency_schedule_id", "emergency_active"),
+        UniqueConstraint(
+            "emergency_schedule_id",
+            "emergency_source_line_id",
+            name="uq_order_lines_emergency_source",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -96,6 +107,14 @@ class OrderLine(Base):
         PGUUID(as_uuid=True), ForeignKey("products.id")
     )
     match_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    emergency_schedule_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("emergency_schedules.id", ondelete="CASCADE")
+    )
+    emergency_source_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("order_lines.id", ondelete="RESTRICT")
+    )
+    emergency_action: Mapped[str | None] = mapped_column(String(20))
+    emergency_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     cancellation_reason: Mapped[str | None] = mapped_column(String(1000))
     cancelled_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"))

@@ -22,7 +22,6 @@ VOICE_EVENT_COUNTER = int(datetime.now(timezone.utc).timestamp() * 1000)
 
 COMMAND_PHRASES = [
     "помощник",
-    "асистент",
     "отмена",
     "остановить",
     "стоп",

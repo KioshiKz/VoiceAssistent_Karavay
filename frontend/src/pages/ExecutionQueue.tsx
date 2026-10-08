@@ -227,10 +227,20 @@ export function ExecutionQueue() {
     }
   }, []);
 
-  const reload = useCallback(() => {
+  useEffect(() => {
+    const syncFullscreen = () => {
+      if (document.fullscreenElement || !fullscreen) return;
+      setFullscreen(false);
+      window.sessionStorage.removeItem("execution-fullscreen-requested");
+    };
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, [fullscreen]);
+
+  const reload = useCallback((silent = false) => {
     const generation = ++reloadGeneration.current;
-    setLoading(true);
-    ordersApi
+    if (!silent) setLoading(true);
+    return ordersApi
       .current(currentContext ?? undefined)
       .then((next) => {
         if (generation !== reloadGeneration.current) return;
@@ -239,20 +249,48 @@ export function ExecutionQueue() {
       })
       .catch(() => {
         if (generation !== reloadGeneration.current) return;
+        if (silent) return;
         setOrder(null);
         setEmpty(true);
       })
       .finally(() => {
-        if (generation === reloadGeneration.current) setLoading(false);
+        if (!silent && generation === reloadGeneration.current) setLoading(false);
       });
   }, [currentContext]);
 
   useEffect(() => {
-    reload();
+    void reload();
+    const interval = window.setInterval(() => void reload(true), 5000);
     return () => {
+      window.clearInterval(interval);
       reloadGeneration.current += 1;
     };
   }, [reload]);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    let lock: { release: () => Promise<void> } | null = null;
+    let active = true;
+    const acquire = async () => {
+      const wakeLock = (navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> } }).wakeLock;
+      if (!wakeLock || document.visibilityState !== "visible") return;
+      try {
+        const nextLock = await wakeLock.request("screen");
+        if (active) lock = nextLock;
+        else await nextLock.release();
+      } catch {
+        // Some browsers require a user gesture; CSS fullscreen remains usable.
+      }
+    };
+    const onVisibility = () => { if (document.visibilityState === "visible") void acquire(); };
+    void acquire();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", onVisibility);
+      void lock?.release();
+    };
+  }, [fullscreen]);
 
   function showSelectedCurrentOrder(nextOrder: CurrentOrderOut) {
     reloadGeneration.current += 1;
@@ -285,7 +323,7 @@ export function ExecutionQueue() {
   }, [order]);
 
   const selectableLines = useMemo(
-    () => (order?.lines ?? []).filter((line) => line.match_status === "matched" && line.status !== "cancelled"),
+    () => (order?.lines ?? []).filter((line) => line.match_status === "matched" && !["cancelled", "completed"].includes(line.status)),
     [order],
   );
 
@@ -392,6 +430,26 @@ export function ExecutionQueue() {
     [findFirstMatchingLine, selectFirstMatchingLine, selectRelativeLine],
   );
 
+  const selectedLine = useMemo(
+    () => order?.lines.find((line) => line.id === selectedLineId) ?? null,
+    [order, selectedLineId],
+  );
+
+  const handleLineCompleted = useCallback((completedLineId: string) => {
+    setOrder((current) => {
+      if (!current) return current;
+      const lines = current.lines.map((line) => line.id === completedLineId ? { ...line, status: "completed" as const, execution_plan_status: "completed" } : line);
+      const next = lines.find((line) => line.id !== completedLineId && line.match_status === "matched" && line.status !== "completed" && line.status !== "cancelled");
+      setSelectedLineId(next?.id ?? null);
+      if (!next) {
+        setExecutionFullscreen(false);
+        void speak("Все доступные позиции заявки выполнены.");
+      }
+      return { ...current, lines };
+    });
+    void reload(true);
+  }, [reload, setExecutionFullscreen]);
+
   useEffect(() => {
     function onVoiceTranscript(event: Event) {
       if (event.defaultPrevented) return;
@@ -406,7 +464,7 @@ export function ExecutionQueue() {
   if (fullscreen && order && selectedLineId) {
     return (
       <div className="execution-fullscreen-page">
-        <ExecutionPanel orderLineId={selectedLineId} fullscreen onFullscreenChange={setExecutionFullscreen} />
+        <ExecutionPanel orderLineId={selectedLineId} orderLine={selectedLine} fullscreen onFullscreenChange={setExecutionFullscreen} onCompleted={handleLineCompleted} />
         <VoiceAssistant />
       </div>
     );
@@ -417,7 +475,7 @@ export function ExecutionQueue() {
       title="Выполнение заявки"
       subtitle="Очередь видна только в пределах цехов и количества позиций, разрешённых ролью."
       actions={
-        <button type="button" onClick={reload} disabled={loading}>
+        <button type="button" onClick={() => void reload()} disabled={loading}>
           <RefreshCw size={17} />
           Обновить
         </button>
@@ -436,6 +494,12 @@ export function ExecutionQueue() {
               </div>
             </div>
 
+            {order.emergency_schedule_id && (
+              <div className="execution-emergency-notice">
+                Экстренное расписание активно. Эти позиции выполняются первыми.
+              </div>
+            )}
+
             {groups.map(([groupName, lines]) => (
               <section className="execution-group" key={groupName}>
                 <h3>{groupName}</h3>
@@ -445,12 +509,13 @@ export function ExecutionQueue() {
                     <button
                       key={line.id}
                       type="button"
-                      className={`execution-line-button${selectedLineId === line.id ? " active" : ""}`}
+                      className={`execution-line-button${selectedLineId === line.id ? " active" : ""}${line.is_emergency ? " emergency" : ""}`}
                       onClick={() => setSelectedLineId(line.id)}
                       disabled={disabled}
                     >
                       <span>
                         <strong>{line.product_name_raw}</strong>
+                        {line.is_emergency && <b>ЭКСТРЕННО</b>}
                         <small>
                           {line.due_time.slice(0, 5)} · {line.quantity} шт · {statusLabel(line.status)}
                         </small>
@@ -463,7 +528,7 @@ export function ExecutionQueue() {
           </aside>
 
           <section className="execution-center">
-            <ExecutionPanel orderLineId={selectedLineId} fullscreen={fullscreen} onFullscreenChange={setExecutionFullscreen} />
+            <ExecutionPanel orderLineId={selectedLineId} orderLine={selectedLine} fullscreen={fullscreen} onFullscreenChange={setExecutionFullscreen} onCompleted={handleLineCompleted} />
           </section>
         </div>
       )}

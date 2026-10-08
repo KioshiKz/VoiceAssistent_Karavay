@@ -6,12 +6,13 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.core.deps import get_current_user
 from app.core.permissions import require_permission
 from app.db.session import get_db
 from app.models.execution import ExecutionPlan, ExecutionPlanStep
+from app.models.emergency import EmergencySchedule
 from app.models.folder import Folder
 from app.models.order import CurrentOrderSelection, Order, OrderLine, OrderLineHistory
 from app.models.product import Product
@@ -31,7 +32,7 @@ from app.schemas.order import (
     OrderSummaryOut,
     OrderUploadOut,
 )
-from app.services import order_access_service, permission_service
+from app.services import emergency_service, order_access_service, permission_service
 from app.services.order_import_service import parse_order_file
 
 router = APIRouter(prefix="/api", tags=["orders"])
@@ -157,6 +158,9 @@ def _serialize_line(line: OrderLine) -> dict:
         "matched_product_id": str(line.matched_product_id) if line.matched_product_id else None,
         "match_status": line.match_status,
         "status": line.status,
+        "is_emergency": line.emergency_schedule_id is not None,
+        "emergency_action": line.emergency_action,
+        "emergency_source_line_id": str(line.emergency_source_line_id) if line.emergency_source_line_id else None,
     }
 
 
@@ -207,6 +211,17 @@ def _ensure_order_not_force_completed(order: Order) -> None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="order_force_completed")
 
 
+async def _ensure_no_emergency_schedule(db: AsyncSession, order_id: uuid.UUID) -> None:
+    schedule_id = await db.scalar(
+        select(EmergencySchedule.id).where(EmergencySchedule.order_id == order_id).limit(1)
+    )
+    if schedule_id is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="emergency_schedule_active_use_emergency_editor",
+        )
+
+
 async def _ensure_order_not_naturally_completed(db: AsyncSession, order: Order) -> None:
     """Keep an archived order immutable unless it was force-completed.
 
@@ -215,13 +230,7 @@ async def _ensure_order_not_naturally_completed(db: AsyncSession, order: Order) 
     """
     if order.force_completed_at is not None:
         return
-    statuses = list(
-        (
-            await db.execute(
-                select(OrderLine.status).where(OrderLine.order_id == order.id)
-            )
-        ).scalars().all()
-    )
+    statuses = [line.status for line in await _load_order_lines(db, order.id)]
     if _order_status(statuses) == "completed":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="order_already_completed")
 
@@ -295,6 +304,10 @@ async def _line_to_out(
         current_step_index=plan.current_step_index if plan is not None else None,
         total_steps=len(plan.steps) if plan is not None else 0,
         current_step_name=_current_step_name(plan),
+        is_emergency=line.emergency_schedule_id is not None,
+        emergency_action=line.emergency_action,
+        emergency_source_line_id=line.emergency_source_line_id,
+        emergency_schedule_id=line.emergency_schedule_id,
     )
 
 
@@ -305,7 +318,7 @@ async def _load_order_lines(db: AsyncSession, order_id: uuid.UUID) -> list[Order
         .options(selectinload(OrderLine.order).selectinload(Order.workshop_folder))
         .order_by(OrderLine.due_time, OrderLine.created_at)
     )
-    return list(result.scalars().all())
+    return emergency_service.effective_order_lines(result.scalars().all())
 
 
 async def _order_detail(db: AsyncSession, order: Order) -> OrderDetailOut:
@@ -334,6 +347,9 @@ async def _order_detail(db: AsyncSession, order: Order) -> OrderDetailOut:
         force_completed_by=order.force_completed_by,
         force_completed_by_name=names.get(order.force_completed_by) if order.force_completed_by else None,
         status=_order_status([line.status for line in lines], order.force_completed_at),
+        emergency_schedule_id=await db.scalar(
+            select(EmergencySchedule.id).where(EmergencySchedule.order_id == order.id).limit(1)
+        ),
         lines=[await _line_to_out(db, line, names, plans.get(line.id)) for line in lines],
     )
 
@@ -352,14 +368,38 @@ async def _orders_visible_to_user_stmt(db: AsyncSession, user: User):
 
 
 def _active_order_conditions():
-    has_any_line = select(OrderLine.id).where(OrderLine.order_id == Order.id).exists()
-    has_unfinished_line = (
-        select(OrderLine.id)
+    source_line = aliased(OrderLine)
+    overlay = aliased(OrderLine)
+    has_overlay = (
+        select(overlay.id)
         .where(
-            OrderLine.order_id == Order.id,
-            OrderLine.status.in_(("pending", "in_progress")),
+            overlay.order_id == source_line.order_id,
+            overlay.emergency_source_line_id == source_line.id,
+            overlay.emergency_active.is_(True),
+            overlay.emergency_action.in_(("replace", "remove")),
         )
         .exists()
+    )
+    effective_source = (
+        select(source_line.id)
+        .where(
+            source_line.order_id == Order.id,
+            source_line.emergency_schedule_id.is_(None),
+            source_line.status != "cancelled",
+            ~has_overlay,
+        )
+    )
+    effective_emergency = select(OrderLine.id).where(
+        OrderLine.order_id == Order.id,
+        OrderLine.emergency_schedule_id.is_not(None),
+        OrderLine.emergency_active.is_(True),
+        OrderLine.emergency_action.in_(("add", "replace")),
+        OrderLine.status != "cancelled",
+    )
+    has_any_line = effective_source.exists() | effective_emergency.exists()
+    has_unfinished_line = (
+        effective_source.where(source_line.status.in_(("pending", "in_progress"))).exists()
+        | effective_emergency.where(OrderLine.status.in_(("pending", "in_progress"))).exists()
     )
     return (
         Order.force_completed_at.is_(None),
@@ -371,11 +411,12 @@ async def _order_summaries(db: AsyncSession, orders: list[Order]) -> list[OrderS
     order_ids = [order.id for order in orders]
     statuses_by_order: dict[uuid.UUID, list[str]] = defaultdict(list)
     if order_ids:
-        rows = await db.execute(
-            select(OrderLine.order_id, OrderLine.status).where(OrderLine.order_id.in_(order_ids))
-        )
-        for order_id, line_status in rows.all():
-            statuses_by_order[order_id].append(line_status)
+        rows = await db.execute(select(OrderLine).where(OrderLine.order_id.in_(order_ids)))
+        lines_by_order: dict[uuid.UUID, list[OrderLine]] = defaultdict(list)
+        for line in rows.scalars().all():
+            lines_by_order[line.order_id].append(line)
+        for order_id, lines in lines_by_order.items():
+            statuses_by_order[order_id] = [line.status for line in emergency_service.effective_order_lines(lines)]
 
     names = await _user_names(db, {order.uploaded_by for order in orders})
     return [
@@ -485,6 +526,9 @@ async def _resolve_current_order(
         selection_mode=selection_mode,
         selected_at=selection.selected_at if selection is not None else None,
         selected_by_name=names.get(selected_by) if selected_by is not None else None,
+        emergency_schedule_id=await db.scalar(
+            select(EmergencySchedule.id).where(EmergencySchedule.order_id == order.id).limit(1)
+        ),
         lines=[await _line_to_out(db, line, names, plans.get(line.id)) for line in lines],
     )
 
@@ -726,13 +770,17 @@ async def list_orders(
 @router.get(
     "/orders/{order_id}",
     response_model=OrderDetailOut,
-    dependencies=[Depends(require_permission("tab.view", tab_key="orders_list"))],
 )
 async def get_order(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    can_view = await permission_service.has_tab_permission(db, user, "tab.view", "orders_list")
+    can_manage_emergency = await permission_service.has_global_permission(db, user, "emergency.manage")
+    can_administer = await permission_service.has_global_permission(db, user, "admin.manage")
+    if not (can_view or can_manage_emergency or can_administer):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="permission_denied")
     order = await db.get(Order, order_id, options=[selectinload(Order.workshop_folder)])
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order_not_found")
@@ -766,7 +814,7 @@ async def force_complete_order(
     lines_result = await db.execute(
         select(OrderLine).where(OrderLine.order_id == order.id).with_for_update()
     )
-    lines = list(lines_result.scalars().all())
+    lines = emergency_service.effective_order_lines(lines_result.scalars().all())
     if _order_status([line.status for line in lines]) == "completed":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="order_already_completed")
     line_ids = [line.id for line in lines]
@@ -869,6 +917,7 @@ async def create_order_line(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="legacy_order_has_no_workshop")
     order = await _lock_order(db, order.id)
     _ensure_order_not_force_completed(order)
+    await _ensure_no_emergency_schedule(db, order.id)
     await _ensure_order_not_naturally_completed(db, order)
 
     if payload.matched_product_id is not None:
@@ -915,6 +964,7 @@ async def delete_order_line(
     line, order, _ = await order_access_service.require_line_permission(db, user, line_id, "folder.view")
     order, line = await _lock_order_line(db, order.id, line.id)
     _ensure_order_not_force_completed(order)
+    await _ensure_no_emergency_schedule(db, order.id)
     await _ensure_order_not_naturally_completed(db, order)
     db.add(_history(line, user.id, "delete", old_value=_serialize_line(line)))
     await db.flush()
@@ -936,6 +986,7 @@ async def match_order_line(
     line, order, workshop = await order_access_service.require_line_permission(db, user, line_id, "folder.view")
     order, line = await _lock_order_line(db, order.id, line.id)
     _ensure_order_not_force_completed(order)
+    await _ensure_no_emergency_schedule(db, order.id)
     if line.status == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="order_line_cancelled")
     if line.status == "completed":
@@ -970,6 +1021,7 @@ async def update_order_line(
     line, order, workshop = await order_access_service.require_line_permission(db, user, line_id, "folder.view")
     order, line = await _lock_order_line(db, order.id, line.id)
     _ensure_order_not_force_completed(order)
+    await _ensure_no_emergency_schedule(db, order.id)
     if line.status == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="order_line_cancelled")
     if line.status == "completed":
@@ -1034,6 +1086,7 @@ async def cancel_order_line(
     line, order, _ = await order_access_service.require_line_permission(db, user, line_id, "folder.view")
     order, line = await _lock_order_line(db, order.id, line.id)
     _ensure_order_not_force_completed(order)
+    await _ensure_no_emergency_schedule(db, order.id)
     if line.status == "cancelled":
         return await _line_to_out(db, line)
     if line.status == "completed":

@@ -3,6 +3,7 @@ import { Mic } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { voiceApi } from "../api/endpoints";
 import { useAuth } from "../auth/AuthContext";
+import { speak } from "../utils/speech";
 
 type VoiceCommand = "advance" | "rewind" | "start" | "stop" | "fullscreen" | "repeat" | "announce";
 type VoiceCue = "wake" | "success" | "error";
@@ -22,13 +23,18 @@ interface SpeechRecognitionEventLike {
   };
 }
 
+interface SpeechRecognitionErrorEventLike {
+  error: string;
+  message?: string;
+}
+
 interface SpeechRecognitionInstance {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
   onend: (() => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
   start: () => void;
   stop: () => void;
 }
@@ -102,26 +108,34 @@ export function VoiceAssistant() {
   const { user } = useAuth();
   const voiceEnabled = user?.voice_assistant_enabled !== false;
   const [supported, setSupported] = useState(true);
+  const [usingVosk, setUsingVosk] = useState(false);
   const [armed, setArmed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const armedRef = useRef(false);
-  const runningRef = useRef(false);
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const clearTimerRef = useRef<number | null>(null);
+  const armedTimerRef = useRef<number | null>(null);
   const lastRelayIdRef = useRef(Number(window.sessionStorage.getItem("voice-relay-last-id") ?? "0"));
   const lastTextRef = useRef({ text: "", at: 0 });
+  const assistantSpeakingRef = useRef(false);
 
-  const showMessage = useCallback((next: string | null) => {
+  const showMessage = useCallback((next: string | null, persistent = false) => {
     setMessage(next);
     if (clearTimerRef.current) window.clearTimeout(clearTimerRef.current);
-    if (next) {
+    if (next && !persistent) {
       clearTimerRef.current = window.setTimeout(() => setMessage(null), 3500);
     }
   }, []);
 
   const setArmedState = useCallback((next: boolean) => {
+    if (armedTimerRef.current) window.clearTimeout(armedTimerRef.current);
     armedRef.current = next;
     setArmed(next);
+    if (next) {
+      armedTimerRef.current = window.setTimeout(() => {
+        armedRef.current = false;
+        setArmed(false);
+      }, 8000);
+    }
   }, []);
 
   const handleCommand = useCallback((text: string) => {
@@ -194,9 +208,12 @@ export function VoiceAssistant() {
 
     showMessage("Неверная команда");
     playVoiceCue("error");
+    void speak("Команда не распознана. Для новой команды снова скажите: помощник.");
+    setArmedState(false);
   }, [navigate, setArmedState, showMessage]);
 
   const handleText = useCallback((rawText: string) => {
+    if (assistantSpeakingRef.current) return;
     const text = rawText.toLowerCase().trim();
     if (!text) return;
 
@@ -204,18 +221,18 @@ export function VoiceAssistant() {
     if (lastTextRef.current.text === text && now - lastTextRef.current.at < 1500) return;
     lastTextRef.current = { text, at: now };
 
-    if (text.includes("отмена")) {
+    if (armedRef.current && text.includes("отмена")) {
       showMessage("Слушание команды отменено");
       setArmedState(false);
       return;
     }
 
     if (!armedRef.current) {
-      if (text.includes("помощник") || text.includes("асистент")) {
+      if (text.includes("помощник")) {
         setArmedState(true);
         showMessage("Слушаю команду");
         playVoiceCue("wake");
-        const commandText = text.replace("помощник", "").replace("асистент", "").trim();
+        const commandText = text.replace("помощник", "").trim();
         if (commandText) handleCommand(commandText);
       }
       return;
@@ -225,45 +242,102 @@ export function VoiceAssistant() {
   }, [handleCommand, setArmedState, showMessage]);
 
   useEffect(() => {
+    const onAssistantSpeaking = (event: Event) => {
+      assistantSpeakingRef.current = !!(event as CustomEvent<{ active: boolean }>).detail?.active;
+    };
+    window.addEventListener("assistant-speaking", onAssistantSpeaking);
+    return () => window.removeEventListener("assistant-speaking", onAssistantSpeaking);
+  }, []);
+
+  useEffect(() => () => {
+    if (clearTimerRef.current) window.clearTimeout(clearTimerRef.current);
+    if (armedTimerRef.current) window.clearTimeout(armedTimerRef.current);
+  }, []);
+
+  useEffect(() => {
     if (!voiceEnabled) return;
     let cancelled = false;
+    let timeout: number | undefined;
+    const controller = new AbortController();
 
     const pollVoiceEvents = async () => {
       try {
-        const events = await voiceApi.events(lastRelayIdRef.current);
+        const events = await voiceApi.events(lastRelayIdRef.current, controller.signal);
         if (cancelled) return;
 
         for (const event of events) {
           if (event.id <= lastRelayIdRef.current) continue;
           lastRelayIdRef.current = Math.max(lastRelayIdRef.current, event.id);
           window.sessionStorage.setItem("voice-relay-last-id", String(lastRelayIdRef.current));
+          if (event.source === "vosk") {
+            setUsingVosk(true);
+            setSupported(true);
+          }
           handleText(event.text);
         }
       } catch {
         // The local backend may be restarting while the dev server is open.
+      } finally {
+        if (!cancelled) timeout = window.setTimeout(() => void pollVoiceEvents(), 700);
       }
     };
 
     void pollVoiceEvents();
-    const interval = window.setInterval(() => {
-      void pollVoiceEvents();
-    }, 700);
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      controller.abort();
+      window.clearTimeout(timeout);
     };
   }, [handleText, voiceEnabled]);
 
   useEffect(() => {
     if (!voiceEnabled) return;
+    if (!window.isSecureContext) {
+      setUsingVosk(true);
+      setSupported(true);
+      showMessage("Vosk активен · скажите «помощник»", true);
+      return;
+    }
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Recognition) {
-      setSupported(false);
+      setUsingVosk(true);
+      setSupported(true);
+      showMessage("Vosk активен · скажите «помощник»", true);
       return;
     }
 
+    let active = true;
+    let restartTimer: number | null = null;
+    const stopWithError = (error: string, details?: string) => {
+      active = false;
+      if (restartTimer !== null) window.clearTimeout(restartTimer);
+      console.warn("Speech recognition failed:", error, details ?? "");
+      if (["network", "service-not-allowed", "language-not-supported"].includes(error)) {
+        setUsingVosk(true);
+        setSupported(true);
+        showMessage("Vosk активен · скажите «помощник»", true);
+        return;
+      }
+      setSupported(false);
+      const messages: Record<string, string> = {
+        "not-allowed": "Доступ к микрофону запрещён. Разрешите его в настройках сайта и включите помощника заново",
+        "service-not-allowed": "Браузер запретил сервис распознавания речи. Можно использовать Vosk",
+        "audio-capture": "Не удалось получить звук с микрофона. Проверьте подключение и доступ к нему",
+        network: "Не удалось подключиться к сервису распознавания речи. Проверьте сеть или используйте Vosk",
+        "language-not-supported": "Сервис распознавания речи не поддерживает русский язык. Можно использовать Vosk",
+      };
+      const message = messages[error] ?? `Ошибка голосового ввода: ${error}`;
+      showMessage(message, true);
+      void speak(message);
+    };
+    const handleStartError = (error: unknown) => {
+      const name = error instanceof Error ? error.name : "unknown";
+      const code = name === "NotAllowedError" || name === "SecurityError" ? "not-allowed" : name;
+      stopWithError(code, error instanceof Error ? error.message : String(error));
+    };
     const recognition = new Recognition();
+    setSupported(true);
     recognition.lang = "ru-RU";
     recognition.continuous = true;
     recognition.interimResults = false;
@@ -272,43 +346,51 @@ export function VoiceAssistant() {
       const transcript = result?.[0]?.transcript ?? "";
       handleText(transcript);
     };
-    recognition.onerror = () => showMessage("Голосовой ввод недоступен");
+    recognition.onerror = (event) => {
+      // Silence and cancellation are normal recognition lifecycle events.
+      if (event.error === "no-speech" || event.error === "aborted") return;
+      stopWithError(event.error, event.message);
+    };
     recognition.onend = () => {
-      if (!runningRef.current) return;
-      window.setTimeout(() => {
+      if (!active) return;
+      if (restartTimer !== null) window.clearTimeout(restartTimer);
+      restartTimer = window.setTimeout(() => {
+        restartTimer = null;
+        if (!active) return;
         try {
           recognition.start();
-        } catch {
-          // Browser can throw if recognition is already starting.
+        } catch (error) {
+          // Recognition may already be starting; other failures need diagnostics.
+          if (!(error instanceof Error && error.name === "InvalidStateError")) handleStartError(error);
         }
       }, 300);
     };
 
-    recognitionRef.current = recognition;
-    runningRef.current = true;
     try {
       recognition.start();
-    } catch {
-      setSupported(false);
+    } catch (error) {
+      handleStartError(error);
     }
 
     return () => {
-      runningRef.current = false;
+      active = false;
+      if (restartTimer !== null) window.clearTimeout(restartTimer);
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
       recognition.stop();
-      recognitionRef.current = null;
       if (clearTimerRef.current) window.clearTimeout(clearTimerRef.current);
+      if (armedTimerRef.current) window.clearTimeout(armedTimerRef.current);
     };
   }, [handleText, showMessage, voiceEnabled]);
 
   if (!voiceEnabled) return null;
-  if (!armed && !message) return null;
-
   return (
-    <div className={`voice-assistant${armed ? " armed" : ""}`} role="status" aria-live="polite">
+    <div className={`voice-assistant${armed ? " armed" : ""}${!supported ? " voice-error" : ""}`} role="status" aria-live="polite">
       <span className="voice-orb">
         <Mic size={18} />
       </span>
-      <span>{message ?? (supported ? "Слушаю команду" : "Слушаю Vosk")}</span>
+      <span>{message ?? (armed ? "Слушаю команду" : usingVosk ? "Vosk активен · скажите «помощник»" : supported ? "Голос готов · скажите «помощник»" : "Голос недоступен")}</span>
     </div>
   );
 }

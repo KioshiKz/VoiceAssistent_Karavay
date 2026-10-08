@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import ValidationError
 
 from app.core.deps import get_current_user
 from app.core.permissions import require_permission
@@ -11,6 +12,7 @@ from app.models.event_template import EventTemplate
 from app.models.recipe_step import RecipeStep
 from app.models.user import User
 from app.schemas.event_template import EventTemplateCreate, EventTemplateOut, EventTemplateUpdate
+from app.schemas.weight_check import WeightCheckSettings
 from app.services import folder_service, ingredient_service, permission_service
 
 router = APIRouter(tags=["events"])
@@ -64,7 +66,15 @@ async def update_event(
     if not await permission_service.has_folder_permission(db, user, "folder.edit", folder):
         raise HTTPException(403, detail="permission_denied")
 
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("event_type", event.event_type) == "weight_check":
+        try:
+            changes["default_params"] = WeightCheckSettings.model_validate(
+                changes.get("default_params", event.default_params) or {}
+            ).model_dump()
+        except ValidationError as exc:
+            raise HTTPException(422, detail="Проверьте допуски и длительность взвешивания (1–86400 секунд).") from exc
+    for key, value in changes.items():
         setattr(event, key, value)
     await db.commit()
     await db.refresh(event)

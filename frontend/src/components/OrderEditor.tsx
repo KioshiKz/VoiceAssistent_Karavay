@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, Edit3, History, Pin, Play, Plus, RefreshCw, Trash2, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Edit3, History, Pin, Play, Plus, RefreshCw, Trash2, X, XCircle } from "lucide-react";
 import { ordersApi, productsApi } from "../api/endpoints";
 import type {
   CurrentOrderOut,
@@ -104,6 +104,7 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
   const canViewHistory = hasGlobal("order.history.view");
   const canForceComplete = hasGlobal("order.force_complete");
   const canSelectCurrent = hasGlobal("orders.select_current");
+  const canManageEmergency = hasGlobal("emergency.manage") || hasGlobal("admin.manage");
 
   const [order, setOrder] = useState<OrderData | null>(null);
   const [currentContext, setCurrentContext] = useState<{
@@ -185,7 +186,7 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
   }, [workshopId]);
 
   const detail = order && isOrderDetail(order) ? order : null;
-  const canAddProduct = canCreateLine && !!workshopId && detail?.status !== "completed";
+  const canAddProduct = canCreateLine && !!workshopId && detail?.status !== "completed" && !order?.emergency_schedule_id;
   const sortedHistory = useMemo(
     () => [...historyItems].sort((a, b) => b.created_at.localeCompare(a.created_at)),
     [historyItems],
@@ -333,6 +334,12 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
       subtitle={subtitle}
       actions={
         <div className="order-toolbar">
+          {canManageEmergency && order && (!detail || detail.status !== "completed") && (
+            <button type="button" className="emergency-button" onClick={() => navigate(`/orders/${order.order_id}/emergency`)}>
+              <AlertTriangle size={17} />
+              Экстренное расписание
+            </button>
+          )}
           {canAddProduct && order && (
             <button type="button" onClick={openCreate} disabled={productsLoading}>
               <Plus size={17} />
@@ -367,6 +374,11 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
       {error && <div className="empty-state">{error}</div>}
       {actionError && <p className="error-text order-action-error">{actionError}</p>}
       {currentSelectionNotice && <p className="current-order-selection-notice">{currentSelectionNotice}</p>}
+      {order?.emergency_schedule_id && (
+        <div className="execution-emergency-notice">
+          Экстренный режим активен. Обычное редактирование заблокировано — используйте «Экстренное расписание».
+        </div>
+      )}
 
       {allowCurrentSelection && (
         <CurrentOrderSelection
@@ -482,7 +494,7 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
                         </td>
                         <td>
                           <div className="table-actions">
-                            {canEdit &&
+                            {canEdit && !order.emergency_schedule_id &&
                               line.status !== "cancelled" &&
                               line.status !== "completed" &&
                               !line.execution_plan_status && (
@@ -490,7 +502,7 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
                                   <Edit3 size={15} />
                                 </button>
                               )}
-                            {canEdit && line.status !== "cancelled" && line.status !== "completed" && (
+                            {canEdit && !order.emergency_schedule_id && line.status !== "cancelled" && line.status !== "completed" && (
                                 <button
                                   type="button"
                                   className="danger"
@@ -500,7 +512,7 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
                                   <XCircle size={15} />
                                 </button>
                             )}
-                            {canDeleteLine && detail?.status !== "completed" && (
+                            {canDeleteLine && !order.emergency_schedule_id && detail?.status !== "completed" && (
                               <button
                                 type="button"
                                 className="danger"

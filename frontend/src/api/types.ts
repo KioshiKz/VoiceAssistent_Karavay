@@ -115,6 +115,27 @@ export interface FolderContentOut {
 export type MeasureType = "weight" | "volume" | "time" | "temperature" | "count";
 export type EventType = "timer" | "weight_check" | "phrase_confirmation";
 
+export interface WeightStatusOut {
+  step_index: number;
+  port: string | null;
+  connected: boolean;
+  weight_g: number | null;
+  target_weight_g: number;
+  tolerance_g: number;
+  tolerance_below_g: number;
+  tolerance_above_g: number;
+  minimum_weight_g: number;
+  maximum_weight_g: number;
+  minimum_allowed_weight_g: number;
+  minimum_weight_blocked: boolean;
+  in_range: boolean;
+  stable: boolean;
+  held_seconds: number;
+  required_seconds: number;
+  ready: boolean;
+  message: string;
+}
+
 export interface IngredientOut {
   id: string;
   folder_id: string;
@@ -137,6 +158,7 @@ export interface EventTemplateOut {
   name: string;
   description: string | null;
   event_type: EventType;
+  default_params: Record<string, unknown> | null;
   is_active: boolean;
 }
 
@@ -198,6 +220,10 @@ export interface OrderLineOut {
   current_step_index: number | null;
   total_steps: number;
   current_step_name: string | null;
+  is_emergency: boolean;
+  emergency_action: "add" | "replace" | "remove" | null;
+  emergency_source_line_id: string | null;
+  emergency_schedule_id: string | null;
 }
 
 export interface OrderUploadOut {
@@ -216,6 +242,7 @@ export interface CurrentOrderOut {
   selection_mode: "automatic" | "manual";
   selected_at: string | null;
   selected_by_name: string | null;
+  emergency_schedule_id: string | null;
   lines: OrderLineOut[];
 }
 
@@ -233,6 +260,7 @@ export interface OrderDetailOut {
   force_completed_by: string | null;
   force_completed_by_name: string | null;
   status: OrderStatus;
+  emergency_schedule_id: string | null;
   lines: OrderLineOut[];
 }
 
@@ -265,6 +293,87 @@ export interface OrderSummaryOut {
   total_lines: number;
   active_lines: number;
   status: OrderStatus;
+}
+
+export interface EmergencySourceLineOut {
+  id: string;
+  product_name_raw: string;
+  quantity: number;
+  due_time: string;
+  matched_product_id: string | null;
+  match_status: string;
+  status: OrderLineOut["status"];
+  overlaid_by_item_id: string | null;
+  overlay_action: "replace" | "remove" | null;
+}
+
+export interface EmergencyItemOut {
+  id: string;
+  action: "add" | "replace" | "remove";
+  source_line_id: string | null;
+  product_name_raw: string;
+  quantity: number;
+  due_time: string;
+  matched_product_id: string | null;
+  match_status: string;
+  status: OrderLineOut["status"];
+  active: boolean;
+}
+
+export interface EmergencyScheduleOut {
+  id: string;
+  order_id: string;
+  reason: string;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+  source_lines: EmergencySourceLineOut[];
+  items: EmergencyItemOut[];
+}
+
+export interface StatisticsSummary {
+  orders: number;
+  positions: number;
+  pending: number;
+  in_progress: number;
+  completed: number;
+  cancelled: number;
+  emergency_schedules: number;
+  emergency_changes: number;
+}
+
+export interface ProductStatistics {
+  product_name: string;
+  positions: number;
+  total_quantity: number;
+  completed: number;
+  cancelled: number;
+  emergency_positions: number;
+}
+
+export interface AuditLogOut {
+  id: string;
+  source: "order" | "emergency";
+  order_id: string | null;
+  order_line_id: string | null;
+  emergency_schedule_id: string | null;
+  product_name_raw: string | null;
+  execution_date: string | null;
+  actor_id: string | null;
+  actor_name: string | null;
+  event_type: string;
+  old_value: Record<string, unknown> | null;
+  new_value: Record<string, unknown> | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface StatisticsOut {
+  summary: StatisticsSummary;
+  products: ProductStatistics[];
+  logs: AuditLogOut[];
+  logs_total: number;
 }
 
 export interface ExecutionPlanStepOut {

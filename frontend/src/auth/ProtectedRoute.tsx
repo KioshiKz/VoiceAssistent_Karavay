@@ -10,7 +10,9 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, tabView, tabEdit, globalCode }: ProtectedRouteProps) {
-  const { user, hasTabView, hasTabEdit, hasGlobal } = useAuth();
+  const { user, isLoading, hasTabView, hasTabEdit, hasGlobal } = useAuth();
+
+  if (isLoading) return <div className="empty-state">Восстановление сессии...</div>;
 
   if (!user) {
     return <Navigate to="/login" replace />;

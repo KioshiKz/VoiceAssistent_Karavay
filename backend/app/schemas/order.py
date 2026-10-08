@@ -27,6 +27,10 @@ class OrderLineOut(BaseModel):
     current_step_index: int | None = None
     total_steps: int = 0
     current_step_name: str | None = None
+    is_emergency: bool = False
+    emergency_action: str | None = None
+    emergency_source_line_id: uuid.UUID | None = None
+    emergency_schedule_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 
@@ -95,6 +99,7 @@ class CurrentOrderOut(BaseModel):
     selection_mode: Literal["automatic", "manual"]
     selected_at: datetime.datetime | None = None
     selected_by_name: str | None = None
+    emergency_schedule_id: uuid.UUID | None = None
     lines: list[OrderLineOut]
 
 
@@ -114,6 +119,7 @@ class OrderDetailOut(BaseModel):
     force_completed_by: uuid.UUID | None
     force_completed_by_name: str | None
     status: str
+    emergency_schedule_id: uuid.UUID | None = None
     lines: list[OrderLineOut]
 
 

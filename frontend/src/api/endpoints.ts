@@ -2,8 +2,10 @@ import { apiClient } from "./client";
 import type {
   AppTab,
   CurrentOrderOut,
+  EmergencyScheduleOut,
   EventTemplateOut,
   ExecutionPlanOut,
+  WeightStatusOut,
   FolderContentOut,
   FolderOut,
   IngredientOut,
@@ -21,6 +23,7 @@ import type {
   Role,
   RolePermissionEntry,
   RolePermissionOut,
+  StatisticsOut,
   TokenResponse,
   UsedInProductOut,
   VoiceEventOut,
@@ -43,7 +46,7 @@ export const tabsApi = {
 };
 
 export const voiceApi = {
-  events: (after = 0) => apiClient.get<VoiceEventOut[]>("/voice/events", { params: { after } }).then((r) => r.data),
+  events: (after = 0, signal?: AbortSignal) => apiClient.get<VoiceEventOut[]>("/voice/events", { params: { after }, signal }).then((r) => r.data),
   speak: (text: string) =>
     apiClient.post("/voice/speak", { text }, { responseType: "blob" }).then((r) => r.data as Blob),
 };
@@ -206,10 +209,48 @@ export const ordersApi = {
 };
 
 export const executionApi = {
+  weightStatus: (planId: string) =>
+    apiClient.get<WeightStatusOut>(`/execution-plans/${planId}/weight-status`, { timeout: 3000 }).then((r) => r.data),
   getOrCreate: (orderLineId: string) =>
     apiClient.get<ExecutionPlanOut>(`/order-lines/${orderLineId}/execution-plan`).then((r) => r.data),
   advance: (planId: string) =>
     apiClient.post<ExecutionPlanOut>(`/execution-plans/${planId}/advance`).then((r) => r.data),
   rewind: (planId: string) =>
     apiClient.post<ExecutionPlanOut>(`/execution-plans/${planId}/rewind`).then((r) => r.data),
+};
+
+export const emergencyApi = {
+  get: (orderId: string) =>
+    apiClient.get<EmergencyScheduleOut>(`/orders/${orderId}/emergency-schedule`).then((r) => r.data),
+  create: (orderId: string, reason: string) =>
+    apiClient.post<EmergencyScheduleOut>(`/orders/${orderId}/emergency-schedule`, { reason }).then((r) => r.data),
+  add: (scheduleId: string, payload: { product_id: string; quantity: number; due_time: string }) =>
+    apiClient.post<EmergencyScheduleOut>(`/emergency-schedules/${scheduleId}/items/add`, payload).then((r) => r.data),
+  replace: (scheduleId: string, payload: { source_line_id: string; quantity: number; due_time?: string }) =>
+    apiClient.post<EmergencyScheduleOut>(`/emergency-schedules/${scheduleId}/items/replace`, payload).then((r) => r.data),
+  removeSource: (scheduleId: string, sourceLineId: string, note?: string) =>
+    apiClient
+      .post<EmergencyScheduleOut>(`/emergency-schedules/${scheduleId}/items/remove`, {
+        source_line_id: sourceLineId,
+        note,
+      })
+      .then((r) => r.data),
+  update: (scheduleId: string, lineId: string, payload: { quantity?: number; due_time?: string }) =>
+    apiClient
+      .patch<EmergencyScheduleOut>(`/emergency-schedules/${scheduleId}/items/${lineId}`, payload)
+      .then((r) => r.data),
+  restore: (scheduleId: string, lineId: string) =>
+    apiClient.delete<EmergencyScheduleOut>(`/emergency-schedules/${scheduleId}/items/${lineId}`).then((r) => r.data),
+};
+
+export const statisticsApi = {
+  get: (params?: {
+    date_from?: string;
+    date_to?: string;
+    workshop_folder_id?: string;
+    actor_id?: string;
+    event_type?: string;
+    limit?: number;
+    offset?: number;
+  }) => apiClient.get<StatisticsOut>("/statistics", { params }).then((r) => r.data),
 };

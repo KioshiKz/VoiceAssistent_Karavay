@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Archive, ClipboardList, FolderTree, Mic, ShieldCheck, Sparkles, Users } from "lucide-react";
+import { Archive, ChartNoAxesCombined, ClipboardList, FolderTree, Mic, ShieldCheck, Sparkles, Users } from "lucide-react";
 import { foldersApi } from "../api/endpoints";
 import type { FolderOut } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -38,6 +38,14 @@ const SECTIONS = [
     icon: ClipboardList,
   },
   {
+    tabKey: "statistics",
+    globalCode: "statistics.view",
+    path: "/statistics",
+    title: "Статистика и журнал",
+    description: "Все позиции, выполнение, экстренные изменения и полный журнал действий.",
+    icon: ChartNoAxesCombined,
+  },
+  {
     tabKey: "execution_queue",
     globalCode: "order.execute",
     path: "/execution",
@@ -70,6 +78,7 @@ export function Dashboard() {
 
   const visibleStatic = SECTIONS.filter((section) => {
     if (section.tabKey === "execution_queue") return hasTabView(section.tabKey) && hasGlobal("order.execute");
+    if (section.tabKey === "statistics") return hasGlobal("statistics.view") || hasGlobal("admin.manage");
     return section.globalCode ? hasTabView(section.tabKey) || hasGlobal(section.globalCode) : hasTabView(section.tabKey);
   });
   const visible = [

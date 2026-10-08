@@ -5,8 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import auth, events, execution, folders, ingredients, orders, products, roles, users, voice
+from app.routers import auth, emergency, events, execution, folders, ingredients, orders, products, roles, statistics, users, voice
 from app.services import tts_service
+from app.services.scale_service import scale_service
 
 
 async def _warm_up_tts() -> None:
@@ -19,7 +20,11 @@ async def _warm_up_tts() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(_warm_up_tts())
-    yield
+    scale_service.start()
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(scale_service.stop)
 
 
 app = FastAPI(title="Karavay Production Console", lifespan=lifespan)
@@ -51,6 +56,8 @@ app.include_router(ingredients.router)
 app.include_router(events.router)
 app.include_router(products.router)
 app.include_router(orders.router)
+app.include_router(emergency.router)
+app.include_router(statistics.router)
 app.include_router(execution.router)
 app.include_router(voice.router)
 

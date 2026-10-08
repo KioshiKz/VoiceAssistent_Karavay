@@ -5,6 +5,8 @@ import { eventsApi } from "../api/endpoints";
 import type { EventTemplateOut, EventType } from "../api/types";
 import { useDialog } from "../components/DialogProvider";
 import { FileWorkspaceShell } from "../components/FileWorkspaceShell";
+import { WeightCheckFields } from "../components/WeightCheckFields";
+import { serializeWeightSettings, weightCheckError } from "../utils/weightCheck";
 
 const EVENT_TYPE_LABELS: Record<EventType, string> = {
   timer: "Таймер",
@@ -34,12 +36,17 @@ export function EventEditor() {
 
   async function save() {
     if (!event) return;
+    if (event.event_type === "weight_check") {
+      const validation = weightCheckError(event.default_params ?? {});
+      if (validation) { alertMessage(validation); return; }
+    }
     setSaving(true);
     try {
       const updated = await eventsApi.update(event.id, {
         name: event.name,
         description: event.description,
         event_type: event.event_type,
+        default_params: event.event_type === "weight_check" ? serializeWeightSettings(event.default_params ?? {}) : event.default_params,
         is_active: event.is_active,
       });
       setEvent(updated);
@@ -114,10 +121,15 @@ export function EventEditor() {
             </select>
           </label>
 
-          <div className="system-role-note">
-            Параметры события: длительность, целевой вес, допуск или фраза подтверждения задаются в шаге рецептуры
-            конкретной продукции.
-          </div>
+          {event.event_type === "weight_check" ? (
+            <>
+              <WeightCheckFields params={event.default_params ?? {}} fieldClassName="editor-field"
+                onChange={(default_params) => setEvent({ ...event, default_params })} />
+              <div className="system-role-note">Эти настройки подставляются в новые шаги рецептуры. Целевой вес задаётся отдельно в каждом шаге. Существующие шаги сохраняют свои параметры.</div>
+            </>
+          ) : (
+            <div className="system-role-note">Длительность таймера или фраза подтверждения задаются в шаге рецептуры конкретной продукции.</div>
+          )}
 
           <label className="checkbox-line">
             <input
