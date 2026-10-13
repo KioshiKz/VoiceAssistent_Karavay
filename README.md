@@ -2,7 +2,7 @@
 
 Веб-приложение производственного учёта: FastAPI/PostgreSQL на backend, React/Vite на frontend, офлайн-распознавание русской речи через Vosk и опциональный серверный синтез речи через Silero TTS.
 
-Ниже описана установка из чистого клона со всеми зависимостями, моделями и локальными файлами, которые не попадают в Git.
+Ниже описана установка из чистого клона со всеми зависимостями, моделями и локальными файлами, которые не попадают в Git. Снимок текущей БД хранится в `backend/data/karavay.sql`: при первом запуске пустая БД получает одинаковые исходные данные у всех пользователей.
 
 ## Системные требования
 
@@ -75,6 +75,7 @@ Copy-Item frontend\.env.example frontend\.env.local
 
 ```dotenv
 DATABASE_URL=postgresql+asyncpg://karavay:karavay@localhost:5432/karavay
+DATABASE_SNAPSHOT_PATH=data/karavay.sql
 JWT_SECRET=replace-with-a-long-random-string
 JWT_ACCESS_TTL_MINUTES=15
 JWT_REFRESH_TTL_DAYS=7
@@ -99,6 +100,8 @@ VITE_API_BASE_URL=http://localhost:8000/api
 
 Не коммитьте `.env` и `.env.local`: в них находятся пароли и секреты.
 
+`DATABASE_URL` задаёт сервер PostgreSQL, а `DATABASE_SNAPSHOT_PATH` — файл начального снимка. Относительный путь к снимку считается от `backend/`; настройки из `backend/.env` загружаются независимо от текущей рабочей папки.
+
 ## 5. PostgreSQL
 
 ### Рекомендуемый вариант: Docker
@@ -110,7 +113,7 @@ docker compose up -d db
 docker compose ps
 ```
 
-Контейнер публикует PostgreSQL на `localhost:5432`, поэтому подходит стандартный `backend/.env.example`. Данные сохраняются в именованном Docker volume `postgres-data`.
+Контейнер публикует PostgreSQL на `localhost:5432`, поэтому подходит стандартный `backend/.env.example`. Данные сохраняются в именованном Docker volume `postgres-data`. На шаге 7 пустая БД будет заполнена из снимка в репозитории. При запуске backend через `docker compose up -d backend` это выполняется автоматически.
 
 Остановить БД без удаления данных:
 
@@ -120,33 +123,23 @@ docker compose stop db
 
 Команда `docker compose down -v` удаляет БД без возможности восстановления; используйте её только для осознанного полного сброса.
 
-### Альтернатива: локальный PostgreSQL 18 для `run_server.py`
+### Альтернатива: локальный PostgreSQL для `run_server.py`
 
-`run_server.py` и `start.bat` рассчитаны на Windows, `C:\Program Files\PostgreSQL\18\bin`, порт `5433` и уже созданный кластер `.devdata/pgdata`. Один раз инициализируйте его:
-
-```powershell
-New-Item -ItemType Directory -Force .devdata | Out-Null
-& "C:\Program Files\PostgreSQL\18\bin\initdb.exe" `
-  -D "$PWD\.devdata\pgdata" -U postgres -A scram-sha-256 --pwprompt
-
-& "C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe" `
-  -D "$PWD\.devdata\pgdata" -l "$PWD\.devdata\pg.log" `
-  -o "-p 5433 -h 127.0.0.1" start
-
-& "C:\Program Files\PostgreSQL\18\bin\createuser.exe" `
-  -h 127.0.0.1 -p 5433 -U postgres --login --pwprompt karavay
-
-& "C:\Program Files\PostgreSQL\18\bin\createdb.exe" `
-  -h 127.0.0.1 -p 5433 -U postgres --owner=karavay karavay
-```
-
-В `backend/.env` укажите пароль, введённый для роли `karavay`, и порт `5433`:
+Установите PostgreSQL 16 или новее. Если стандартный порт уже занят, задайте свободный порт и пароль в `backend/.env`, например:
 
 ```dotenv
-DATABASE_URL=postgresql+asyncpg://karavay:<ПАРОЛЬ>@127.0.0.1:5433/karavay
+DATABASE_URL=postgresql+asyncpg://karavay:karavay@127.0.0.1:5433/karavay
 ```
 
-Если PostgreSQL установлен в другой каталог или другой версии, измените константу `PG_CTL` в `run_server.py` и `PGBIN` в `start.bat`.
+Подготовьте БД одной командой из корня репозитория:
+
+```powershell
+Set-Location backend
+.\.venv\Scripts\python.exe -m scripts.init_database --start-local
+Set-Location ..
+```
+
+Можно также запустить `python run_server.py`, который сам вызывает подготовку БД. Скрипт создаёт кластер в `.devdata/pgdata`, если он отсутствует, запускает его на порту из `DATABASE_URL`, создаёт БД, восстанавливает снимок и применяет миграции. Существующая БД сохраняется. На Windows инструменты ищутся среди установленных версий PostgreSQL, на Linux/macOS — в `PATH`; нестандартный путь можно задать переменной `POSTGRES_BIN`.
 
 ## 6. Голосовые модели
 
@@ -207,24 +200,35 @@ backend/.models/silero_tts/v4_ru.pt
 
 Его размер — около 40 МБ. Источник модели задан в `backend/app/services/tts_service.py`: `https://models.silero.ai/models/tts/ru/v4_ru.pt`. Если предварительное скачивание пропустить, backend попробует получить файл при первом запуске/первом запросе синтеза.
 
-## 7. Миграции и первый администратор
+## 7. Восстановление снимка и миграции
 
 При запущенной БД выполните:
 
 ```powershell
 Set-Location backend
-.\.venv\Scripts\python.exe -m alembic upgrade head
-.\.venv\Scripts\python.exe -m scripts.seed_admin
+.\.venv\Scripts\python.exe -m scripts.init_database
 Set-Location ..
 ```
 
-Вход выполняется через `INITIAL_ADMIN_EMAIL` и `INITIAL_ADMIN_PASSWORD` из `backend/.env`. Скрипт `seed_admin` идемпотентен, но не меняет пароль существующего пользователя. Для принудительного обновления пароля:
+Снимок содержит текущие рецепты, ингредиенты, заявки, историю, роли и учётные записи с хешами паролей. Восстановление выполняется одной транзакцией и только при отсутствии таблиц в схеме `public`. Повторный запуск сохраняет данные и применяет только недостающие миграции.
+
+После восстановления действуют прежние учётные записи и пароли. Чтобы создать отдельного администратора из `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD`, выполните `python -m scripts.seed_admin` из `backend`. Этот скрипт не меняет пароль существующего пользователя. Для принудительного обновления пароля:
 
 ```powershell
 Set-Location backend
 .\.venv\Scripts\python.exe -m scripts.reset_admin_password
 Set-Location ..
 ```
+
+Чтобы обновить снимок из текущей рабочей БД:
+
+```powershell
+Set-Location backend
+.\.venv\Scripts\python.exe -m scripts.export_database
+Set-Location ..
+```
+
+Для экспорта нужен `pg_dump` той же или более новой основной версии, чем сервер. Изменённый `backend/data/karavay.sql` можно добавить в Git. Новый снимок используется при создании новых БД; существующие локальные БД автоматически не перезаписываются. Для совместной работы с одними живыми данными все клиенты должны подключаться к одному backend и серверу PostgreSQL.
 
 ## 8. Запуск
 
@@ -256,13 +260,13 @@ backend\.venv\Scripts\python.exe `
 
 ### Единая команда на Windows
 
-После настройки нативного PostgreSQL в `.devdata`:
+После установки PostgreSQL и настройки `backend/.env`:
 
 ```powershell
 python run_server.py --voice
 ```
 
-Скрипт запускает PostgreSQL на `5433`, применяет миграции, поднимает backend и frontend, затем запускает Vosk. Без распознавания речи используйте `python run_server.py`. `start.bat` запускает БД, миграции, backend и frontend, но не Vosk.
+Скрипт подготавливает PostgreSQL по адресу из `DATABASE_URL`, восстанавливает снимок в пустую БД, применяет миграции, поднимает backend и frontend, затем запускает Vosk. Без распознавания речи используйте `python run_server.py`. `start.bat` также подготавливает БД и запускает backend и frontend, но не Vosk.
 
 ## 9. Проверка установки
 
@@ -304,7 +308,7 @@ Test-Path backend\.models\silero_tts\v4_ru.pt
 | `.vscode/*` кроме `extensions.json`, `.idea/`, `*.suo`, `*.ntvs*`, `*.njsproj`, `*.sln`, `*.sw?` | IDE/редактор | Нет |
 | `.DS_Store`, `Thumbs.db` | macOS/Windows | Нет |
 
-Ничего из кэшей, сборок, локальных БД, моделей из игнорируемых каталогов и файлов с секретами добавлять в Git не нужно.
+Кэши, сборки, рабочие файлы кластера PostgreSQL, модели из игнорируемых каталогов и `.env` остаются вне Git. Переносимый снимок БД `backend/data/karavay.sql` входит в репозиторий.
 
 ## Весы
 
