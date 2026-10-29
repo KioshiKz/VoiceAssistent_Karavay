@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     initial_admin_password: str = "change-me-now"
     scale_port: str = "auto"
     scale_baudrate: int = 9600
+    onec_odata_url: str = ""
+    onec_odata_user: str = ""
+    onec_odata_password: str = ""
 
 
 settings = Settings()

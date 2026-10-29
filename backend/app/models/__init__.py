@@ -1,4 +1,5 @@
 from app.models.user import User
+from app.models.onec import OneCLink, OneCRecord
 from app.models.role import Role, UserRole
 from app.models.permission import AppTab, PermissionDef, RolePermission
 from app.models.folder import Folder
@@ -11,6 +12,8 @@ from app.models.execution import ExecutionPlan, ExecutionPlanStep
 from app.models.emergency import EmergencySchedule, EmergencyScheduleHistory
 
 __all__ = [
+    "OneCLink",
+    "OneCRecord",
     "User",
     "Role",
     "UserRole",

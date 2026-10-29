@@ -54,6 +54,12 @@ const NAV_ITEMS = [
       hasTabView("users") || hasGlobal("admin.manage"),
   },
   {
+    to: "/admin/1c",
+    label: "Данные 1С",
+    icon: Archive,
+    canShow: (_hasTabView: (key: string) => boolean, hasGlobal: (code: string) => boolean) => hasGlobal("admin.manage"),
+  },
+  {
     to: "/orders/current",
     label: "Текущая заявка",
     icon: ClipboardList,

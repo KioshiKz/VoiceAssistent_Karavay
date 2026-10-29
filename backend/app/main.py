@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import auth, emergency, events, execution, folders, ingredients, orders, products, roles, statistics, users, voice
+from app.routers import auth, emergency, events, execution, folders, ingredients, onec, orders, products, roles, statistics, users, voice
 from app.services import tts_service
 from app.services.scale_service import scale_service
 
@@ -49,6 +49,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(onec.router)
 app.include_router(users.router)
 app.include_router(roles.router)
 app.include_router(folders.router)
