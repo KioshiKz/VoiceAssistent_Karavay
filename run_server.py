@@ -14,11 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
-PG_DATA = ROOT / ".devdata" / "pgdata"
-PG_LOG = ROOT / ".devdata" / "pg.log"
-PG_CTL = Path(r"C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe")
-
-PG_PORT = 5433
 BACKEND_PORT = 8000
 FRONTEND_PORT = 5173
 VOICE_SCRIPT = BACKEND_DIR / "model" / "text_to_speach" / "test.py"
@@ -107,37 +102,6 @@ def run_checked(name: str, command: list[str], cwd: Path) -> None:
     result = subprocess.run(command, cwd=cwd, env=os.environ.copy())
     if result.returncode != 0:
         raise RuntimeError(f"{name} failed with exit code {result.returncode}")
-
-
-def start_postgres() -> None:
-    if is_port_open(PG_PORT):
-        print(f"[postgres] already listening on 127.0.0.1:{PG_PORT}")
-        return
-    if not PG_CTL.exists():
-        raise FileNotFoundError(f"pg_ctl was not found: {PG_CTL}")
-    if not PG_DATA.exists():
-        raise FileNotFoundError(f"Postgres data directory was not found: {PG_DATA}")
-
-    PG_LOG.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[postgres] starting on 127.0.0.1:{PG_PORT}")
-    command = [
-        str(PG_CTL),
-        "-D",
-        str(PG_DATA),
-        "-l",
-        str(PG_LOG),
-        "-o",
-        f"-p {PG_PORT} -h 127.0.0.1",
-        "start",
-    ]
-    run_checked("postgres", command, ROOT)
-
-    for _ in range(30):
-        if is_port_open(PG_PORT):
-            print("[postgres] ready")
-            return
-        time.sleep(0.5)
-    raise TimeoutError("Postgres did not start in time")
 
 
 def stream_output(name: str, process: subprocess.Popen[str]) -> None:
@@ -259,8 +223,7 @@ def main() -> int:
     py = backend_python()
     npm = npm_command()
 
-    start_postgres()
-    run_checked("alembic", [str(py), "-m", "alembic", "upgrade", "head"], BACKEND_DIR)
+    run_checked("database", [str(py), "-m", "scripts.init_database", "--start-local"], BACKEND_DIR)
 
     processes = [
         start_process(
