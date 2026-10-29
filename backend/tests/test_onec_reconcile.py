@@ -53,6 +53,39 @@ class ReconcileTests(unittest.TestCase):
         [deviation] = result["report_deviations"]
         self.assertEqual(deviation["top"][0], {"material": "Мука", "unit": "кг", "norm": 20.0, "fact": 25.0})
 
+    def test_costs_from_postings_price_norm_and_deviation(self):
+        def posting(doc, line, qty, amount):
+            return {"Recorder": doc, "Recorder_Type": "StandardODATA.Document_ТребованиеНакладная", "LineNumber": str(line),
+                    "ExtDimensionCr1": "flour", "ExtDimensionCr2": WH, "Сумма": amount, "КоличествоCr": qty}
+
+        result = reconcile(
+            [report("rep1", [("bread", "spec", 100)])],
+            # 25 kg written off: 20 kg at 150 ₸/kg in two batches, 5 kg with no cost (negative stock).
+            [requisition("req1", [("flour", 25)], base="rep1")],
+            RECORDS, END,
+            [posting("req1", 1, 15, 2250), posting("req1", 2, 5, 750), posting("req1", 3, 5, 0)])
+        [row] = result["rows"]
+        self.assertEqual((row["price"], row["fact_cost"], row["zero_cost_qty"]), (150.0, 3000.0, 5.0))
+        self.assertEqual((row["norm_cost"], row["diff_cost"]), (3000.0, 750.0))
+        self.assertEqual(result["costs"], {"fact": 3000.0, "norm": 3000.0, "diff": 750.0, "zero_cost_rows": 1,
+                                           "incomplete_requisitions": []})
+
+    def test_requisition_with_uncovered_lines_has_no_cost(self):
+        result = reconcile(
+            [report("rep1", [("bread", "spec", 100)])],
+            [requisition("req1", [("flour", 20)], base="rep1")],
+            RECORDS, END,
+            [{"Recorder": "req1", "Recorder_Type": "StandardODATA.Document_ТребованиеНакладная", "LineNumber": "1",
+              "ExtDimensionCr1": "flour", "ExtDimensionCr2": WH, "Сумма": 1500, "КоличествоCr": 10}])
+        [row] = result["rows"]
+        self.assertEqual((row["fact_cost"], row["price"], row["diff_cost"]), (0.0, None, None))
+        self.assertEqual(result["costs"]["incomplete_requisitions"], ["Q1"])
+
+    def test_without_postings_quantities_only(self):
+        result = reconcile([report("rep1", [("bread", "spec", 100)])], [], RECORDS, END)
+        self.assertIsNone(result["costs"])
+        self.assertNotIn("price", result["rows"][0])
+
     def test_unposted_not_reflected_and_late_requisitions(self):
         result = reconcile(
             [report("rep1", [("bread", "spec", 100)], posted=False),

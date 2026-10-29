@@ -15,7 +15,14 @@ type Row = {
   fact_other: number;
   diff: number;
   diff_pct: number | null;
+  // Present when costs were read from accounting postings.
+  price?: number | null;
+  fact_cost?: number;
+  norm_cost?: number | null;
+  diff_cost?: number | null;
+  zero_cost_qty?: number;
 };
+type Costs = { fact: number; norm: number; diff: number; zero_cost_rows: number; incomplete_requisitions: string[] };
 type ReportRef = { number: string; date: string; warehouse: string; products: number };
 type MissingSpec = { number: string; date: string; product: string; quantity: number };
 type Deviation = {
@@ -32,6 +39,7 @@ type Result = {
   reports: number;
   reports_not_reflected: number;
   requisitions: number;
+  costs: Costs | null;
   rows: Row[];
   reports_without_requisition: ReportRef[];
   lines_without_spec: MissingSpec[];
@@ -41,6 +49,7 @@ type Result = {
 
 const THRESHOLDS = [0, 2, 5, 10, 25];
 const SORTS = {
+  money: { label: "отклонению в тенге", key: (row: Row) => Math.abs(row.diff_cost ?? 0) },
   pct: { label: "% отклонения", key: (row: Row) => (row.diff_pct === null ? -1 : Math.abs(row.diff_pct)) },
   diff: { label: "отклонению в единицах", key: (row: Row) => Math.abs(row.diff) },
   norm: { label: "объёму нормы", key: (row: Row) => row.norm },
@@ -53,6 +62,24 @@ function isoDate(value: Date) {
 
 function qty(value: number) {
   return value.toLocaleString("ru-RU", { maximumFractionDigits: 3 });
+}
+
+function money(value: number) {
+  return `${value.toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₸`;
+}
+
+// Summary tiles are narrow: 74 040 693 ₸ -> 74,04 млн ₸.
+function compactMoney(value: number) {
+  const abs = Math.abs(value);
+  if (abs >= 1e6) return `${(value / 1e6).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} млн ₸`;
+  if (abs >= 1e3) return `${(value / 1e3).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс. ₸`;
+  return money(value);
+}
+
+const NOWRAP = { whiteSpace: "nowrap" } as const;
+
+function signed(value: number, format: (value: number) => string) {
+  return `${value > 0 ? "+" : ""}${format(value)}`;
 }
 
 function day(value: string) {
@@ -73,7 +100,7 @@ export function OneCReconciliation() {
   const [warehouse, setWarehouse] = useState("");
   const [threshold, setThreshold] = useState(5);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortKey>("pct");
+  const [sort, setSort] = useState<SortKey>("money");
 
   async function run() {
     setLoading(true);
@@ -113,7 +140,7 @@ export function OneCReconciliation() {
         <label>По дату<input type="date" value={period.date_to} onChange={(event) => setPeriod({ ...period, date_to: event.target.value })} /></label>
         <button type="button" disabled={loading || !period.date_from || !period.date_to} onClick={() => void run()}>{loading ? "Читаем документы 1С…" : "Сверить"}</button>
       </div>
-      {loading && <p role="status">Получаем отчёты и требования за период. За месяц это около минуты.</p>}
+      {loading && <p role="status">Получаем отчёты, требования и проводки за период. За месяц это 1–2 минуты.</p>}
       {error && <p className="error-text" role="alert">{error}</p>}
     </section>
 
@@ -122,6 +149,10 @@ export function OneCReconciliation() {
         <article><small>Отчётов производства</small><strong>{result.reports}</strong></article>
         <article><small>Требований-накладных</small><strong>{result.requisitions}</strong></article>
         <article><small>Позиций сырья</small><strong>{result.rows.length}</strong></article>
+        {result.costs && <>
+          <article><small>Списано сырья на сумму</small><strong>{compactMoney(result.costs.fact)}</strong></article>
+          <article><small>{result.costs.diff >= 0 ? "Перерасход против нормы" : "Экономия против нормы"}</small><strong>{signed(result.costs.diff, compactMoney)}</strong></article>
+        </>}
         <article><small>Отклонение больше 5%</small><strong>{deviating}</strong></article>
         <article><small>Отчётов без требования</small><strong>{result.reports_without_requisition.length}</strong></article>
       </section>
@@ -142,7 +173,7 @@ export function OneCReconciliation() {
           <label>Поиск<input value={search} placeholder="Название или код" onChange={(event) => setSearch(event.target.value)} /></label>
         </div>
         {rows.length === 0 ? <div className="empty-state">Нет позиций с таким отклонением.</div> : <div className="order-table-scroll"><table className="order-table">
-          <thead><tr><th>Склад</th><th>Сырьё</th><th>Ед.</th><th>Норма</th><th>Списано</th><th>в т.ч. по актам</th><th>Отклонение</th><th>%</th></tr></thead>
+          <thead><tr><th>Склад</th><th>Сырьё</th><th>Ед.</th><th>Норма</th><th>Списано</th><th>в т.ч. по актам</th><th>Отклонение</th><th>%</th>{result.costs && <><th>Цена</th><th>Списано, ₸</th><th>Отклонение, ₸</th></>}</tr></thead>
           <tbody>{rows.map((row) => <tr key={`${row.warehouse}|${row.code}|${row.material}`}>
             <td>{row.warehouse}</td>
             <td>{row.material}{row.code && <small> · {row.code}</small>}</td>
@@ -152,9 +183,16 @@ export function OneCReconciliation() {
             <td>{row.fact_by_act ? qty(row.fact_by_act) : ""}</td>
             <td>{row.diff > 0 ? "+" : ""}{qty(row.diff)}</td>
             <td>{row.diff_pct === null ? "нет в норме" : `${row.diff_pct > 0 ? "+" : ""}${qty(row.diff_pct)}%`}</td>
+            {result.costs && <>
+              <td style={NOWRAP}>{row.price != null ? money(row.price) : "нет цены"}</td>
+              <td style={NOWRAP}>{money(row.fact_cost ?? 0)}{row.zero_cost_qty ? <small> · {qty(row.zero_cost_qty)} {row.unit} без себестоимости</small> : null}</td>
+              <td style={NOWRAP}>{row.diff_cost != null ? signed(row.diff_cost, money) : ""}</td>
+            </>}
           </tr>)}</tbody>
         </table></div>}
-        <p><small>Показано {rows.length} из {result.rows.length}. «Нет в норме» — сырьё списано (обычно по актам приёма-передачи), но не входит в спецификации выпущенной продукции; при сортировке по % такие позиции в конце.</small></p>
+        <p><small>Показано {rows.length} из {result.rows.length}. «Нет в норме» — сырьё списано (обычно по актам приёма-передачи), но не входит в спецификации выпущенной продукции; при сортировке по % такие позиции в конце.
+          {result.costs && <> Цена — средняя себестоимость списания за период по проводкам 1С (по складу, иначе по материалу в целом); отклонение в тенге = отклонение в единицах × цена.
+            «Нет цены» обычно у собственных полуфабрикатов: они списываются без себестоимости, а их сырьё уже учтено в отчётах об их выпуске.</>}</small></p>
       </section>
 
       {result.reports_without_requisition.length > 0 && <section className="editor-card">
@@ -185,6 +223,11 @@ export function OneCReconciliation() {
           <thead><tr><th>Отчёт</th><th>Дата</th><th>Продукция</th><th>Количество</th></tr></thead>
           <tbody>{result.lines_without_spec.map((l, index) => <tr key={`${l.number}-${index}`}><td>{l.number}</td><td>{day(l.date)}</td><td>{l.product}</td><td>{qty(l.quantity)}</td></tr>)}</tbody>
         </table></div>
+      </section>}
+
+      {result.costs && result.costs.incomplete_requisitions.length > 0 && <section className="editor-card">
+        <h2>Требования без полной стоимости · {result.costs.incomplete_requisitions.length}</h2>
+        <p>Проводки этих требований не совпали с их строками по количеству, поэтому их стоимость не учтена: {result.costs.incomplete_requisitions.join(", ")}.</p>
       </section>}
 
       {result.reports_not_reflected > 0 && <p><small>Отчётов с флагом «Не отражать в отчётах по сырью» исключено: {result.reports_not_reflected}.</small></p>}

@@ -72,8 +72,58 @@ def requisition_fact(requisition):
     return fact
 
 
-def reconcile(reports, requisitions, records, period_end):
-    """Pure part. `period_end` is the exclusive end; later requisitions only link reports."""
+def requisition_costs(requisitions, postings):
+    """Write-off cost of requisitions from their accounting postings.
+
+    Returns cost and priced quantity per (warehouse, material), quantity written
+    off at zero cost, and requisitions whose postings do not cover their lines
+    (then their cost is left out rather than guessed)."""
+    by_document = {}
+    for posting in postings:
+        if posting["Recorder_Type"].rsplit(".", 1)[-1] == "Document_ТребованиеНакладная":
+            by_document.setdefault(posting["Recorder"], []).append(posting)
+    cost, priced, zero, incomplete = {}, {}, {}, []
+    for requisition in requisitions:
+        lines = requisition_fact(requisition)
+        posted, document_cost, document_priced, document_zero = {}, {}, {}, {}
+        for posting in by_document.get(requisition["Ref_Key"], []):
+            material, quantity = posting["ExtDimensionCr1"], number(posting["КоличествоCr"] or 0)
+            amount = number(posting["Сумма"])
+            posted[material] = posted.get(material, Decimal(0)) + quantity
+            document_cost[material] = document_cost.get(material, Decimal(0)) + amount
+            target = document_priced if amount else document_zero
+            target[material] = target.get(material, Decimal(0)) + quantity
+        if any(abs(posted.get(m, Decimal(0)) - q) > Decimal("0.0005") for m, q in lines.items()):
+            incomplete.append(requisition)
+            continue
+        warehouse = requisition["Склад_Key"]
+        for material, amount in document_cost.items():
+            key = (warehouse, material)
+            cost[key] = cost.get(key, Decimal(0)) + amount
+            if document_priced.get(material):
+                priced[key] = priced.get(key, Decimal(0)) + document_priced[material]
+            if document_zero.get(material):
+                zero[key] = zero.get(key, Decimal(0)) + document_zero[material]
+    return cost, priced, zero, incomplete
+
+
+def unit_prices(cost, priced):
+    """Average write-off cost per unit, by warehouse and as a fallback by material.
+
+    Only quantities written off with a cost count, so zero-cost lines do not lower the price."""
+    by_key, by_material = {}, {}
+    for key, quantity in priced.items():
+        by_key[key] = cost[key] / quantity
+        total = by_material.setdefault(key[1], [Decimal(0), Decimal(0)])
+        total[0] += cost[key]
+        total[1] += quantity
+    return by_key, {material: amount / quantity for material, (amount, quantity) in by_material.items()}
+
+
+def reconcile(reports, requisitions, records, period_end, postings=None):
+    """Pure part. `period_end` is the exclusive end; later requisitions only link reports.
+
+    Without `postings` the result has quantities only."""
     items = {r["Ref_Key"]: r for r in records.get("items", [])}
     units = {r["Ref_Key"]: r["Description"].strip() for r in records.get("units", [])}
     specs = {r["Ref_Key"]: r for r in records.get("specs", [])}
@@ -139,11 +189,34 @@ def reconcile(reports, requisitions, records, period_end):
         for material, quantity in requisition_fact(requisition).items():
             row(requisition["Склад_Key"], material)[source_of(requisition)] += quantity
 
+    in_period = [r for r in requisitions if r["Date"] < end]
+    with_costs = postings is not None
+    cost, priced, zero, incomplete = requisition_costs(in_period, postings or [])
+    price_by_key, price_by_material = unit_prices(cost, priced)
+    totals = {"fact": Decimal(0), "norm": Decimal(0), "diff": Decimal(0), "zero_cost_rows": 0}
+
     result_rows = []
     for (warehouse, material), values in rows.items():
         fact = values["report"] + values["act"] + values["other"]
         diff = fact - values["norm"]
+        price = price_by_key.get((warehouse, material), price_by_material.get(material))
+        money = {}
+        if with_costs:
+            fact_cost = cost.get((warehouse, material), Decimal(0))
+            totals["fact"] += fact_cost
+            if price is not None:
+                totals["norm"] += values["norm"] * price
+                totals["diff"] += diff * price
+            totals["zero_cost_rows"] += (warehouse, material) in zero
+            money = {
+                "price": out(price) if price is not None else None,
+                "fact_cost": out(fact_cost),
+                "norm_cost": out(values["norm"] * price) if price is not None else None,
+                "diff_cost": out(diff * price) if price is not None else None,
+                "zero_cost_qty": out(zero.get((warehouse, material), Decimal(0))),
+            }
         result_rows.append({
+            **money,
             "warehouse": warehouse_name(warehouse),
             "material": item_name(material),
             "code": items.get(material, {}).get("Code", "").strip(),
@@ -162,7 +235,14 @@ def reconcile(reports, requisitions, records, period_end):
     return {
         "reports": len(reports),
         "reports_not_reflected": skipped_reports,
-        "requisitions": sum(1 for r in requisitions if r["Date"] < end),
+        "requisitions": len(in_period),
+        "costs": {
+            "fact": out(totals["fact"]),
+            "norm": out(totals["norm"]),
+            "diff": out(totals["diff"]),
+            "zero_cost_rows": totals["zero_cost_rows"],
+            "incomplete_requisitions": [r["Number"].strip() for r in incomplete],
+        } if with_costs else None,
         "rows": result_rows,
         "reports_without_requisition": [
             {"number": r["Number"].strip(), "date": r["Date"], "warehouse": warehouse_name(r["СкладСырья_Key"]),
@@ -193,7 +273,12 @@ async def run_reconciliation(db: AsyncSession, reader, date_from: date, date_to:
         end = datetime.combine(date_to + timedelta(days=1), time.min)
         reports = await asyncio.to_thread(reader.read_documents, "reports", start, end)
         requisitions = await asyncio.to_thread(reader.read_documents, "requisitions", start, end + LINK_GRACE)
+        # Costs come from the postings of the accounts the requisitions write off from (usually only 1310).
+        accounts = {line["СчетБУ_Key"] for r in requisitions if r["Date"] < end.isoformat() for line in r["Материалы"]}
+        postings = []
+        for account in sorted(accounts - {EMPTY_REF}):
+            postings += await asyncio.to_thread(reader.read_credit_postings, account, start, end)
         return {"date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
-                **reconcile(reports, requisitions, records, end)}
+                **reconcile(reports, requisitions, records, end, postings)}
     finally:
         await db.rollback()

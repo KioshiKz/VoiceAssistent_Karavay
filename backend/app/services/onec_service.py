@@ -2,7 +2,7 @@
 (they proved unreliable); documents are filtered on the server only by date."""
 import asyncio
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import time
@@ -64,6 +64,17 @@ def validate_row(kind, row):
     return ref
 
 
+POSTING_FIELDS = "Period,Recorder,Recorder_Type,LineNumber,ExtDimensionCr1,ExtDimensionCr2,Сумма,КоличествоCr"
+
+
+def validate_posting(row):
+    if not isinstance(row["Recorder_Type"], str) or not is_number(row["Сумма"]):
+        raise ValueError()
+    if row["КоличествоCr"] is not None and not is_number(row["КоличествоCr"]):
+        raise ValueError()
+    return (uuid.UUID(row["Recorder"]), int(row["LineNumber"]))
+
+
 def validate_document(kind, row):
     ref = uuid.UUID(row["Ref_Key"])
     if not isinstance(row["Date"], str) or not isinstance(row["Number"], str):
@@ -80,8 +91,7 @@ def validate_document(kind, row):
         uuid.UUID(line["Номенклатура_Key"])
         if not is_number(line["Количество"]) or not is_number(line["Коэффициент"]):
             raise ValueError()
-        if kind == "reports":
-            uuid.UUID(line["Спецификация_Key"])
+        uuid.UUID(line["Спецификация_Key"] if kind == "reports" else line["СчетБУ_Key"])
     return ref
 
 
@@ -131,19 +141,20 @@ class ODataReader:
         self.source = hashlib.sha256(self.url.encode()).hexdigest()
         self.opener = urllib.request.build_opener(NoRedirect())
 
-    def request(self, entity, params):
+    def request(self, entity, params, safe="/"):
         # The training version briefly refuses new sessions; retry before failing the whole sync.
         for delay in SESSION_LIMIT_RETRY_DELAYS:
             try:
-                return self.request_once(entity, params)
+                return self.request_once(entity, params, safe)
             except OneCSessionLimit:
                 time.sleep(delay)
-        return self.request_once(entity, params)
+        return self.request_once(entity, params, safe)
 
-    def request_once(self, entity, params):
-        url = self.url + urllib.parse.quote(entity) + "?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+    def request_once(self, entity, params, safe="/"):
+        url = self.url + urllib.parse.quote(entity, safe=safe) + "?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         try:
-            with self.opener.open(urllib.request.Request(url, headers=self.headers, method="GET"), timeout=30) as response:
+            # Accounting register queries over a period take noticeably longer than catalog pages.
+            with self.opener.open(urllib.request.Request(url, headers=self.headers, method="GET"), timeout=120) as response:
                 raw = response.read(16 * 1024 * 1024 + 1)
                 if len(raw) > 16 * 1024 * 1024:
                     raise OneCError("Ответ 1С превышает допустимый размер страницы.")
@@ -169,6 +180,31 @@ class ODataReader:
         params = {"$select": fields, "$orderby": "Ref_Key",
                   "$filter": f"Date ge datetime'{date_from:%Y-%m-%dT%H:%M:%S}' and Date lt datetime'{date_to:%Y-%m-%dT%H:%M:%S}'"}
         return self.read_all(entity, params, lambda row: validate_document(kind, row))
+
+    def read_credit_postings(self, account_key, date_from, date_to, window=timedelta(days=2)):
+        """Accounting postings crediting an account in [date_from, date_to), with subconto.
+
+        The virtual table has no paging, so the period is read in short windows;
+        its bounds are inclusive, hence the second subtracted and the dedup."""
+        account = str(uuid.UUID(account_key))
+        condition = "AccountCr_Key eq guid''" + account + "''"
+        rows = {}
+        start = date_from
+        while start < date_to:
+            end = min(start + window, date_to)
+            function = (f"/RecordsWithExtDimensions(StartPeriod=datetime'{start:%Y-%m-%dT%H:%M:%S}',"
+                        f"EndPeriod=datetime'{end - timedelta(seconds=1):%Y-%m-%dT%H:%M:%S}',Condition='{condition}')")
+            data = self.request("AccountingRegister_Типовой" + function, {"$format": "json", "$select": POSTING_FIELDS},
+                                safe="/(),=':")
+            if not isinstance(data, dict) or not isinstance(data.get("value"), list):
+                raise OneCError("Некорректный ответ регистра бухгалтерии.")
+            for row in data["value"]:
+                try:
+                    rows[validate_posting(row)] = row
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    raise OneCError("Некорректная проводка регистра бухгалтерии.") from None
+            start = end
+        return list(rows.values())
 
     def read_all(self, entity, params, validate):
         rows, seen = [], set()
