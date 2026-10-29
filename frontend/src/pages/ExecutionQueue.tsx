@@ -7,6 +7,7 @@ import { CurrentOrderSelection } from "../components/CurrentOrderSelection";
 import { ExecutionPanel } from "../components/ExecutionPanel";
 import { VoiceAssistant } from "../components/VoiceAssistant";
 import { speak } from "../utils/speech";
+import { formatYield } from "../utils/units";
 
 function statusLabel(status: OrderLineOut["status"]) {
   if (status === "pending") return "ожидает";
@@ -199,7 +200,7 @@ function extractDirectTime(query: string): { time: string; remainder: string } |
 }
 
 function announceLine(time: string, line: OrderLineOut) {
-  void speak(`Заявка на ${time.replace(":", " ")}: ${line.product_name_raw}, ${line.quantity} шт.`);
+  void speak(`Заявка на ${time.replace(":", " ")}: ${line.product_name_raw}, ${formatYield(line.quantity, line.unit ?? "pcs")}.`);
 }
 
 export function ExecutionQueue() {
@@ -517,7 +518,7 @@ export function ExecutionQueue() {
                         <strong>{line.product_name_raw}</strong>
                         {line.is_emergency && <b>ЭКСТРЕННО</b>}
                         <small>
-                          {line.due_time.slice(0, 5)} · {line.quantity} шт · {statusLabel(line.status)}
+                          {line.due_time.slice(0, 5)} · {formatYield(line.quantity, line.unit ?? "pcs")} · {statusLabel(line.status)}
                         </small>
                       </span>
                     </button>

@@ -49,7 +49,8 @@ class IngredientBrief(BaseModel):
 class ProductBrief(BaseModel):
     id: uuid.UUID
     name: str
-    base_quantity: int
+    base_quantity: float
+    yield_unit: str = "pcs"
     is_active: bool
 
     model_config = {"from_attributes": True}

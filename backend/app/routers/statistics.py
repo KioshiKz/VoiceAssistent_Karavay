@@ -10,6 +10,7 @@ from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.emergency import EmergencySchedule, EmergencyScheduleHistory
 from app.models.order import Order, OrderLine, OrderLineHistory
+from app.models.product import Product
 from app.models.user import User
 from app.schemas.statistics import AuditLogOut, ProductStatistics, StatisticsOut, StatisticsSummary
 from app.services import emergency_service, permission_service
@@ -63,10 +64,14 @@ async def statistics(
     for order in orders:
         effective_lines.extend(emergency_service.effective_order_lines(lines_by_order[order.id]))
 
-    product_rows: dict[str, dict[str, int]] = defaultdict(
+    product_ids = {line.matched_product_id for line in effective_lines if line.matched_product_id}
+    units = dict((await db.execute(select(Product.id, Product.yield_unit).where(Product.id.in_(product_ids)))).all()) if product_ids else {}
+
+    product_rows: dict[str, dict] = defaultdict(
         lambda: {
+            "unit": None,
             "positions": 0,
-            "total_quantity": 0,
+            "total_quantity": 0.0,
             "completed": 0,
             "cancelled": 0,
             "emergency_positions": 0,
@@ -76,6 +81,7 @@ async def statistics(
         row = product_rows[line.product_name_raw]
         row["positions"] += 1
         row["total_quantity"] += line.quantity
+        row["unit"] = row["unit"] or units.get(line.matched_product_id)
         row["completed"] += int(line.status == "completed")
         row["cancelled"] += int(line.status == "cancelled")
         row["emergency_positions"] += int(line.emergency_schedule_id is not None)

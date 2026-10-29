@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { BellRing, Plus, Save, Wheat, Workflow, X } from "lucide-react";
 import { eventsApi, ingredientsApi, productsApi } from "../api/endpoints";
-import type { EventTemplateOut, IngredientOut, ProductDetailOut } from "../api/types";
+import type { EventTemplateOut, IngredientOut, ProductDetailOut, YieldUnit } from "../api/types";
 import { RecipeStepList } from "../components/RecipeStepList";
 import { UnitQuantityInput } from "../components/UnitQuantityInput";
 import { useDialog } from "../components/DialogProvider";
@@ -10,6 +10,7 @@ import { FileWorkspaceShell } from "../components/FileWorkspaceShell";
 import { WeightCheckFields } from "../components/WeightCheckFields";
 import { serializeWeightSettings, weightCheckDefaults, weightCheckError } from "../utils/weightCheck";
 import { apiErrorMessage } from "../utils/apiError";
+import { YIELD_UNIT_LABELS, yieldStep } from "../utils/units";
 
 type AddMode = "ingredient" | "event" | "ingredient_event" | null;
 
@@ -55,7 +56,7 @@ export function ProductEditor() {
   async function saveHeader() {
     if (!product) return;
     try {
-      await productsApi.update(product.id, { name: product.name, base_quantity: product.base_quantity });
+      await productsApi.update(product.id, { name: product.name, base_quantity: product.base_quantity, yield_unit: product.yield_unit });
       alertMessage("Сохранено");
     } catch (error) {
       alertMessage(apiErrorMessage(error, "Не удалось сохранить продукцию. Попробуйте ещё раз."));
@@ -194,12 +195,21 @@ export function ProductEditor() {
             <input value={product.name} onChange={(event) => setProduct({ ...product, name: event.target.value })} />
           </label>
           <label className="editor-field">
-            Базовое количество, шт.
+            Выход рецептуры, {YIELD_UNIT_LABELS[product.yield_unit]}
             <input
               type="number"
+              min={0}
+              step={yieldStep(product.yield_unit)}
               value={product.base_quantity}
               onChange={(event) => setProduct({ ...product, base_quantity: Number(event.target.value) })}
             />
+          </label>
+          <label className="editor-field">
+            Единица выхода и заявок
+            <select value={product.yield_unit} onChange={(event) => setProduct({ ...product, yield_unit: event.target.value as YieldUnit })}>
+              <option value="pcs">штуки</option>
+              <option value="kg">килограммы</option>
+            </select>
           </label>
         </section>
 

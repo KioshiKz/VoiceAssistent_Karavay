@@ -4,6 +4,7 @@ import { foldersApi, statisticsApi } from "../api/endpoints";
 import type { FolderOut, StatisticsOut } from "../api/types";
 import { ConsoleShell } from "../components/ConsoleShell";
 import { HISTORY_LABELS } from "../utils/orderHistory";
+import { formatYield } from "../utils/units";
 
 const EVENT_LABELS: Record<string, string> = {
   ...HISTORY_LABELS,
@@ -103,7 +104,7 @@ export function Statistics() {
           <section className="editor-card statistics-products">
             <div className="pane-heading"><div><p className="eyebrow">Продукция</p><h2>Все позиции за период</h2></div></div>
             <div className="order-table-scroll"><table className="order-table"><thead><tr><th>Продукция</th><th>Позиций</th><th>Количество</th><th>Готово</th><th>Отменено</th><th>Экстренных</th></tr></thead>
-              <tbody>{data.products.map((row) => <tr key={row.product_name}><td><strong>{row.product_name}</strong></td><td>{row.positions}</td><td>{row.total_quantity}</td><td>{row.completed}</td><td>{row.cancelled}</td><td>{row.emergency_positions}</td></tr>)}</tbody>
+              <tbody>{data.products.map((row) => <tr key={row.product_name}><td><strong>{row.product_name}</strong></td><td>{row.positions}</td><td>{formatYield(row.total_quantity, row.unit)}</td><td>{row.completed}</td><td>{row.cancelled}</td><td>{row.emergency_positions}</td></tr>)}</tbody>
             </table></div>
           </section>
 

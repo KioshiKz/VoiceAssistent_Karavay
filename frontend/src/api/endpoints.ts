@@ -29,6 +29,7 @@ import type {
   VoiceEventOut,
   UserListOut,
   UserOut,
+  YieldUnit,
 } from "./types";
 
 export const authApi = {
@@ -121,10 +122,10 @@ export const productsApi = {
   search: (q: string) => apiClient.get<ProductOut[]>("/products/search", { params: { q } }).then((r) => r.data),
   availableForWorkshop: (workshopId: string) =>
     apiClient.get<ProductOut[]>(`/workshops/${workshopId}/products`).then((r) => r.data),
-  create: (folderId: string, payload: { name: string; base_quantity: number }) =>
+  create: (folderId: string, payload: { name: string; base_quantity: number; yield_unit: YieldUnit }) =>
     apiClient.post<ProductOut>(`/folders/${folderId}/products`, payload).then((r) => r.data),
   get: (id: string) => apiClient.get<ProductDetailOut>(`/products/${id}`).then((r) => r.data),
-  update: (id: string, payload: Partial<{ name: string; base_quantity: number; is_active: boolean }>) =>
+  update: (id: string, payload: Partial<{ name: string; base_quantity: number; yield_unit: YieldUnit; is_active: boolean }>) =>
     apiClient.patch<ProductOut>(`/products/${id}`, payload).then((r) => r.data),
   remove: (id: string) => apiClient.delete(`/products/${id}`).then((r) => r.data),
   createStep: (

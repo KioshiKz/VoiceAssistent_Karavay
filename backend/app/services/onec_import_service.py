@@ -31,7 +31,9 @@ UNITS = {
     "112": ("volume", Decimal(1000)),
     "796": ("count", Decimal(1)),
 }
-PIECE_UNIT = "796"
+PIECE_UNIT, KILOGRAM_UNIT = "796", "166"
+# Product yield units the application supports, by OKEI code.
+YIELD_UNITS = {PIECE_UNIT: "pcs", KILOGRAM_UNIT: "kg"}
 ROOT_FOLDER, PRODUCTS_FOLDER, INGREDIENTS_FOLDER = "1С", "Продукция", "Сырьё"
 
 
@@ -92,10 +94,12 @@ def build_plan(records):
             reason = "Основная спецификация удалена или не найдена"
         elif spec["Owner_Key"] != item["Ref_Key"]:
             reason = "Спецификация принадлежит другой позиции"
-        elif unit_codes.get(item["БазоваяЕдиницаИзмерения_Key"]) != PIECE_UNIT:
-            reason = "Выход не в штуках (следующий этап)"
-        elif spec["Количество"] <= 0 or not float(spec["Количество"]).is_integer():
-            reason = "Выход не целое положительное число"
+        elif unit_codes.get(item["БазоваяЕдиницаИзмерения_Key"]) not in YIELD_UNITS:
+            reason = f"Выход в «{unit_names.get(item['БазоваяЕдиницаИзмерения_Key'], '?')}», а не в штуках или килограммах"
+        elif quantize_quantity(Decimal(str(spec["Количество"]))) <= 0:
+            reason = "Выход не положительный"
+        elif unit_codes[item["БазоваяЕдиницаИзмерения_Key"]] == PIECE_UNIT and not float(spec["Количество"]).is_integer():
+            reason = "Выход в штуках не целый"
         else:
             reason = None
         if reason:
@@ -132,14 +136,23 @@ def build_plan(records):
         elif not steps:
             skipped.add("Нет переносимых строк состава", name)
         else:
-            base_quantity = int(spec["Количество"])
+            yield_unit = YIELD_UNITS[unit_codes[item["БазоваяЕдиницаИзмерения_Key"]]]
+            lines = [[s["ingredient_ref"], s["quantity"]] for s in steps]
+            if yield_unit == "pcs":
+                base_quantity = int(spec["Количество"])
+                # Unchanged form for piece recipes, so their earlier links still match.
+                recipe_hash = digest([base_quantity, lines])
+            else:
+                base_quantity = float(quantize_quantity(Decimal(str(spec["Количество"]))))
+                recipe_hash = digest(["kg", base_quantity, lines])
             products.append({
                 "ref": item["Ref_Key"],
                 "name": name,
                 "base_quantity": base_quantity,
+                "yield_unit": yield_unit,
                 "groups": group_names(item, items),
                 "steps": steps,
-                "hash": digest([base_quantity, [[s["ingredient_ref"], s["quantity"]] for s in steps]]),
+                "hash": recipe_hash,
             })
 
     return {
@@ -282,7 +295,7 @@ async def apply_plan(db, source, plan, folders):
         if product is None:
             folder = await folders.get([ROOT_FOLDER, PRODUCTS_FOLDER, *planned["groups"]])
             product = Product(id=uuid.uuid4(), folder_id=folder.id, name=planned["name"],
-                              base_quantity=planned["base_quantity"], is_active=True)
+                              base_quantity=planned["base_quantity"], yield_unit=planned["yield_unit"], is_active=True)
             db.add(product)
             steps = new_steps(product.id, planned, ingredient_ids)
             db.add_all(steps)
@@ -308,6 +321,7 @@ async def apply_plan(db, source, plan, folders):
         steps = new_steps(product.id, planned, ingredient_ids)
         db.add_all(steps)
         product.base_quantity = planned["base_quantity"]
+        product.yield_unit = planned["yield_unit"]
         link.source_hash, link.local_hash = planned["hash"], local_recipe_hash(steps)
         stats["products_updated"] += 1
         stats["steps_written"] += len(steps)

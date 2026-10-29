@@ -1,4 +1,4 @@
-import type { MeasureType } from "../api/types";
+import type { MeasureType, YieldUnit } from "../api/types";
 
 export const DISPLAY_UNITS: Record<MeasureType, { unit: string; label: string; factor: number }[]> = {
   weight: [
@@ -69,4 +69,22 @@ export function formatCompound(valueCanonical: number, measureType: MeasureType)
     return `${trim(value)} °C`;
   }
   return `${trim(value)} шт`;
+}
+
+export const YIELD_UNIT_LABELS: Record<YieldUnit, string> = { pcs: "шт", kg: "кг" };
+
+/** "100 шт", "2,5 кг"; unmatched order lines (no unit) show the bare number. */
+export function formatYield(quantity: number, unit: YieldUnit | null | undefined): string {
+  const value = quantize(quantity).toLocaleString("ru-RU", { maximumFractionDigits: 3 });
+  return unit ? `${value} ${YIELD_UNIT_LABELS[unit]}` : value;
+}
+
+/** Input step: whole pieces, grams for kilograms; anything goes while the product is unknown. */
+export function yieldStep(unit: YieldUnit | null | undefined): string {
+  return unit === "pcs" ? "1" : unit === "kg" ? "0.001" : "any";
+}
+
+/** Same rule as the server: positive, and whole for pieces. */
+export function isValidYieldQuantity(quantity: number, unit: YieldUnit | null | undefined): boolean {
+  return quantity > 0 && (unit !== "pcs" || Number.isInteger(quantity));
 }

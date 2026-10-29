@@ -9,7 +9,9 @@ class OrderLineOut(BaseModel):
     id: uuid.UUID
     order_id: uuid.UUID
     product_name_raw: str
-    quantity: int
+    quantity: float
+    # Matched product's yield unit ("pcs" or "kg"); None while unmatched.
+    unit: str | None = None
     due_time: datetime.time
     match_status: str
     matched_product_id: uuid.UUID | None
@@ -49,7 +51,7 @@ class OrderLineMatch(BaseModel):
 
 class OrderLineUpdate(BaseModel):
     product_name_raw: str | None = Field(default=None, min_length=1, max_length=255)
-    quantity: int | None = Field(default=None, ge=1)
+    quantity: float | None = Field(default=None, gt=0)
     due_time: datetime.time | None = None
     matched_product_id: uuid.UUID | None = None
 
@@ -57,7 +59,7 @@ class OrderLineUpdate(BaseModel):
 class OrderLineCreate(BaseModel):
     order_id: uuid.UUID
     product_name_raw: str = Field(min_length=1, max_length=255)
-    quantity: int = Field(ge=1)
+    quantity: float = Field(gt=0)
     due_time: datetime.time
     matched_product_id: uuid.UUID | None = None
 

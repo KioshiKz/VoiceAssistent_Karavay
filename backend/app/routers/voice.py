@@ -86,7 +86,9 @@ async def voice_grammar(db: AsyncSession = Depends(get_db)):
     for product_name, quantity, due_time in order_lines_result.all():
         _add_phrase(phrases, product_name)
         _add_phrase(phrases, f"заявка {product_name}")
-        _add_phrase(phrases, f"заявка {product_name} {quantity}")
+        if float(quantity).is_integer():
+            # Fractional kilograms are not part of the spoken quantity grammar.
+            _add_phrase(phrases, f"заявка {product_name} {int(quantity)}")
         _add_phrase(phrases, f"заявка {due_time:%H %M}")
         _add_phrase(phrases, f"заявка {due_time:%H:%M}")
         # Combined "продукт + время" phrase, mirroring the "продукт + количество"

@@ -1,7 +1,7 @@
 import unittest
 from decimal import Decimal
 
-from app.services.onec_import_service import build_plan
+from app.services.onec_import_service import build_plan, digest
 from app.services.onec_service import current_main_specs
 
 EMPTY = "00000000-0000-0000-0000-000000000000"
@@ -49,15 +49,31 @@ class BuildPlanTests(unittest.TestCase):
     def test_unsupported_recipes_are_reported_not_imported(self):
         data = records(
             [item("old", "Удаленные", folder=True), item("retired", "Старый", parent="old"),
-             item("cream", "Крем", KG), item("gone", "Удалён", deleted=True), item("flour", "Мука", KG)],
-            [spec("s1", "retired", 10, [(1, "flour", 1)]), spec("s2", "cream", 1, [(1, "flour", 1)]),
-             spec("s3", "gone", 10, [(1, "flour", 1)])],
-            [("retired", "s1"), ("cream", "s2"), ("gone", "s3")],
+             item("tape", "Лента", METER), item("bun", "Булка"), item("gone", "Удалён", deleted=True),
+             item("flour", "Мука", KG)],
+            [spec("s1", "retired", 10, [(1, "flour", 1)]), spec("s2", "tape", 1, [(1, "flour", 1)]),
+             spec("s3", "gone", 10, [(1, "flour", 1)]), spec("s4", "bun", 2.5, [(1, "flour", 1)])],
+            [("retired", "s1"), ("tape", "s2"), ("gone", "s3"), ("bun", "s4")],
         )
         plan = build_plan(data)
         self.assertEqual(plan["products"], [])
         self.assertEqual({r["reason"] for r in plan["skipped"]}, {
-            "Продукция в группе «Удаленные» 1С", "Выход не в штуках (следующий этап)", "Продукция удалена или не найдена в 1С"})
+            "Продукция в группе «Удаленные» 1С", "Выход в «м», а не в штуках или килограммах",
+            "Продукция удалена или не найдена в 1С", "Выход в штуках не целый"})
+
+    def test_kilogram_recipe_keeps_fractional_yield(self):
+        data = records([item("cream", "Крем", KG), item("butter", "Масло", KG)],
+                       [spec("s1", "cream", 1.8, [(1, "butter", 0.9)])], [("cream", "s1")])
+        [product] = build_plan(data)["products"]
+        self.assertEqual((product["base_quantity"], product["yield_unit"]), (1.8, "kg"))
+        self.assertEqual(product["steps"], [{"ingredient_ref": "butter", "quantity": Decimal("900.000")}])
+
+    def test_piece_recipe_hash_is_stable_across_versions(self):
+        # Links stored before kilogram support must still match piece recipes.
+        data = records([item("bread", "Хлеб"), item("flour", "Мука", KG)],
+                       [spec("s1", "bread", 100, [(1, "flour", 1)])], [("bread", "s1")])
+        [product] = build_plan(data)["products"]
+        self.assertEqual(product["hash"], digest([100, [["flour", Decimal("1000.000")]]]))
 
     def test_recipe_hash_tracks_quantities(self):
         base = [item("bread", "Хлеб"), item("flour", "Мука", KG)]

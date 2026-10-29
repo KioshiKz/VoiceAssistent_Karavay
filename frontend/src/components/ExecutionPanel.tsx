@@ -17,6 +17,7 @@ import type { ExecutionPlanOut, ExecutionPlanStepOut, OrderLineOut, WeightStatus
 import { speak } from "../utils/speech";
 import { weightCheckSummary } from "../utils/weightCheck";
 import { stepSpeech } from "../utils/executionSpeech";
+import { formatYield } from "../utils/units";
 
 const ACTIVE_TIMER_KEY = "karavay.activeExecutionTimer";
 const COMPLETED_TIMERS_KEY = "karavay.completedExecutionTimers";
@@ -506,7 +507,7 @@ export function ExecutionPanel({ orderLineId, orderLine, fullscreen = false, onF
           {orderLine && (
             <div className="execution-order-identity">
               <strong>{orderLine.product_name_raw}</strong>
-              <span>{orderLine.quantity} шт. · {orderLine.due_time.slice(0, 5)}</span>
+              <span>{formatYield(orderLine.quantity, orderLine.unit ?? "pcs")} · {orderLine.due_time.slice(0, 5)}</span>
             </div>
           )}
           <h2>{progressText}</h2>

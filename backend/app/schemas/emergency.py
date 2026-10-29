@@ -10,13 +10,13 @@ class EmergencyScheduleCreate(BaseModel):
 
 class EmergencyAddItem(BaseModel):
     product_id: uuid.UUID
-    quantity: int = Field(ge=1)
+    quantity: float = Field(gt=0)
     due_time: datetime.time
 
 
 class EmergencyReplaceItem(BaseModel):
     source_line_id: uuid.UUID
-    quantity: int = Field(ge=1)
+    quantity: float = Field(gt=0)
     due_time: datetime.time | None = None
 
 
@@ -26,14 +26,15 @@ class EmergencyRemoveItem(BaseModel):
 
 
 class EmergencyItemUpdate(BaseModel):
-    quantity: int | None = Field(default=None, ge=1)
+    quantity: float | None = Field(default=None, gt=0)
     due_time: datetime.time | None = None
 
 
 class EmergencySourceLineOut(BaseModel):
     id: uuid.UUID
     product_name_raw: str
-    quantity: int
+    quantity: float
+    unit: str | None = None
     due_time: datetime.time
     matched_product_id: uuid.UUID | None
     match_status: str
@@ -47,7 +48,8 @@ class EmergencyItemOut(BaseModel):
     action: str
     source_line_id: uuid.UUID | None
     product_name_raw: str
-    quantity: int
+    quantity: float
+    unit: str | None = None
     due_time: datetime.time
     matched_product_id: uuid.UUID | None
     match_status: str

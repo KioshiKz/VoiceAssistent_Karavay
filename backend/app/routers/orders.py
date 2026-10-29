@@ -34,6 +34,7 @@ from app.schemas.order import (
 )
 from app.services import emergency_service, order_access_service, permission_service
 from app.services.order_import_service import parse_order_file
+from app.services.quantity_service import normalize_quantity
 
 router = APIRouter(prefix="/api", tags=["orders"])
 
@@ -267,6 +268,14 @@ async def _plans_by_line(
     return {plan.order_line_id: plan for plan in result.scalars().all()}
 
 
+async def _line_unit(db: AsyncSession, line: OrderLine) -> str | None:
+    """Unit of the matched product; unmatched lines have none yet."""
+    if line.matched_product_id is None:
+        return None
+    product = await db.get(Product, line.matched_product_id)
+    return product.yield_unit if product is not None else None
+
+
 async def _line_to_out(
     db: AsyncSession,
     line: OrderLine,
@@ -287,6 +296,7 @@ async def _line_to_out(
         order_id=line.order_id,
         product_name_raw=line.product_name_raw,
         quantity=line.quantity,
+        unit=await _line_unit(db, line),
         due_time=line.due_time,
         match_status=line.match_status,
         matched_product_id=line.matched_product_id,
@@ -564,11 +574,16 @@ async def upload_order(
     lines_out: list[OrderLine] = []
     for parsed in parsed_lines:
         product = await _match_product(db, parsed.product_name_raw, workshop)
+        try:
+            quantity = normalize_quantity(parsed.quantity, product.yield_unit if product else None)
+        except HTTPException as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                detail=f"{parsed.product_name_raw}: {exc.detail}") from None
         line = OrderLine(
             order_id=order.id,
             row_group_index=parsed.row_group_index,
             product_name_raw=parsed.product_name_raw,
-            quantity=parsed.quantity,
+            quantity=quantity,
             due_time=parsed.due_time,
             matched_product_id=product.id if product else None,
             match_status="matched" if product else "unmatched",
@@ -937,7 +952,7 @@ async def create_order_line(
         order_id=order.id,
         row_group_index=next_group_index,
         product_name_raw=product.name,
-        quantity=payload.quantity,
+        quantity=normalize_quantity(payload.quantity, product.yield_unit),
         due_time=payload.due_time,
         matched_product_id=product.id,
         match_status="matched",
@@ -996,8 +1011,10 @@ async def match_order_line(
     if await _line_has_execution_plan(db, line.id):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="execution_plan_already_created")
     product = await order_access_service.get_active_workshop_product_or_404(db, payload.product_id, workshop)
+    quantity = normalize_quantity(line.quantity, product.yield_unit)
 
     old_value = _serialize_line(line)
+    line.quantity = quantity
     line.product_name_raw = product.name
     line.matched_product_id = product.id
     line.match_status = "matched"
@@ -1061,8 +1078,9 @@ async def update_order_line(
     elif "matched_product_id" in updates and updates["matched_product_id"] is None:
         line.matched_product_id = None
         line.match_status = "unmatched"
-    if "quantity" in updates:
-        line.quantity = updates["quantity"]
+    if "quantity" in updates or selected_product is not None:
+        unit = selected_product.yield_unit if selected_product is not None else await _line_unit(db, line)
+        line.quantity = normalize_quantity(updates.get("quantity", line.quantity), unit)
     if "due_time" in updates:
         line.due_time = updates["due_time"]
 

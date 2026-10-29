@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models.emergency import EmergencySchedule, EmergencyScheduleHistory
 from app.models.execution import ExecutionPlan
 from app.models.order import Order, OrderLine, OrderLineHistory
+from app.models.product import Product
 from app.models.user import User
 from app.schemas.emergency import (
     EmergencyAddItem,
@@ -22,6 +23,7 @@ from app.schemas.emergency import (
     EmergencySourceLineOut,
 )
 from app.services import emergency_service, order_access_service, permission_service
+from app.services.quantity_service import normalize_quantity
 
 router = APIRouter(prefix="/api", tags=["emergency schedules"])
 
@@ -36,6 +38,13 @@ async def _require_emergency_manager(
     if not allowed:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="permission_denied")
     return user
+
+
+async def _unit(db: AsyncSession, line: OrderLine) -> str | None:
+    if line.matched_product_id is None:
+        return None
+    product = await db.get(Product, line.matched_product_id)
+    return product.yield_unit if product is not None else None
 
 
 def _touch(schedule: EmergencySchedule) -> None:
@@ -147,6 +156,7 @@ async def _schedule_out(db: AsyncSession, schedule: EmergencySchedule) -> Emerge
                 id=line.id,
                 product_name_raw=line.product_name_raw,
                 quantity=line.quantity,
+                unit=await _unit(db, line),
                 due_time=line.due_time,
                 matched_product_id=line.matched_product_id,
                 match_status=line.match_status,
@@ -163,6 +173,7 @@ async def _schedule_out(db: AsyncSession, schedule: EmergencySchedule) -> Emerge
                 source_line_id=line.emergency_source_line_id,
                 product_name_raw=line.product_name_raw,
                 quantity=line.quantity,
+                unit=await _unit(db, line),
                 due_time=line.due_time,
                 matched_product_id=line.matched_product_id,
                 match_status=line.match_status,
@@ -305,7 +316,7 @@ async def add_emergency_item(
         order_id=order.id,
         row_group_index=await _next_row_index(db, order.id),
         product_name_raw=product.name,
-        quantity=payload.quantity,
+        quantity=normalize_quantity(payload.quantity, product.yield_unit),
         due_time=payload.due_time,
         matched_product_id=product.id,
         match_status="matched",
@@ -339,13 +350,14 @@ async def replace_emergency_item(
     schedule = await _schedule_or_404(db, schedule_id)
     await _require_schedule_access(db, user, schedule)
     source = await _source_line(db, schedule, payload.source_line_id)
+    quantity = normalize_quantity(payload.quantity, await _unit(db, source))
     line = await _find_source_overlay(db, schedule, source.id)
     if line is None:
         line = OrderLine(
             order_id=source.order_id,
             row_group_index=await _next_row_index(db, source.order_id),
             product_name_raw=source.product_name_raw,
-            quantity=payload.quantity,
+            quantity=quantity,
             due_time=payload.due_time or source.due_time,
             matched_product_id=source.matched_product_id,
             match_status=source.match_status,
@@ -361,7 +373,7 @@ async def replace_emergency_item(
     else:
         await _ensure_item_editable(db, line)
         old = _line_snapshot(line)
-        line.quantity = payload.quantity
+        line.quantity = quantity
         line.due_time = payload.due_time or source.due_time
         line.emergency_action = "replace"
         line.emergency_active = True
@@ -461,7 +473,10 @@ async def update_emergency_item(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="emergency_remove_marker_not_editable")
     await _ensure_item_editable(db, line)
     old = _line_snapshot(line)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if "quantity" in changes:
+        changes["quantity"] = normalize_quantity(changes["quantity"], await _unit(db, line))
+    for key, value in changes.items():
         setattr(line, key, value)
     snapshot = _line_snapshot(line)
     db.add(_line_history(line, user.id, "emergency_item_updated", old, snapshot))

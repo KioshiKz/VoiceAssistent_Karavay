@@ -136,7 +136,8 @@ async def get_or_create_execution_plan(db: AsyncSession, order_line_id: uuid.UUI
     )
     steps = steps_result.scalars().all()
 
-    multiplier = Decimal(order_line.quantity) / Decimal(product.base_quantity)
+    # Both are floats from Numeric columns; go through str so 2.5 stays exactly 2.5.
+    multiplier = Decimal(str(order_line.quantity)) / Decimal(str(product.base_quantity))
 
     plan = ExecutionPlan(order_line_id=order_line.id, product_id=product.id, multiplier=multiplier)
     db.add(plan)

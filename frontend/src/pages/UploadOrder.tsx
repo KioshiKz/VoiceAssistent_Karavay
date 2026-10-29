@@ -3,6 +3,7 @@ import { FileUp } from "lucide-react";
 import { foldersApi, ordersApi } from "../api/endpoints";
 import type { FolderOut, OrderUploadOut } from "../api/types";
 import { ConsoleShell } from "../components/ConsoleShell";
+import { formatYield } from "../utils/units";
 
 function folderLabel(folder: FolderOut, folders: FolderOut[]) {
   const byId = new Map(folders.map((item) => [item.id, item]));
@@ -125,7 +126,7 @@ export function UploadOrder() {
                 {result.lines.map((line) => (
                   <tr key={line.id}>
                     <td>{line.product_name_raw}</td>
-                    <td>{line.quantity}</td>
+                    <td>{formatYield(line.quantity, line.unit)}</td>
                     <td>{line.due_time.slice(0, 5)}</td>
                     <td>
                       <span className={`badge ${line.match_status}`}>

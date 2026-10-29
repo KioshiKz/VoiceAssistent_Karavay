@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 import { emergencyApi, ordersApi, productsApi } from "../api/endpoints";
 import type { EmergencyScheduleOut, OrderDetailOut, ProductOut } from "../api/types";
 import { ConsoleShell } from "../components/ConsoleShell";
+import { formatYield, isValidYieldQuantity, YIELD_UNIT_LABELS, yieldStep } from "../utils/units";
 
 function errorText(error: unknown) {
   const detail = isAxiosError(error) ? error.response?.data?.detail : null;
@@ -24,6 +25,7 @@ export function EmergencySchedule() {
   const [reason, setReason] = useState("");
   const [draftQuantities, setDraftQuantities] = useState<Record<string, number>>({});
   const [addDraft, setAddDraft] = useState({ product_id: "", quantity: 1, due_time: "00:00" });
+  const addUnit = products.find((product) => product.id === addDraft.product_id)?.yield_unit;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -177,9 +179,9 @@ export function EmergencySchedule() {
               <label>Продукция<select value={addDraft.product_id} onChange={(event) => setAddDraft((current) => ({ ...current, product_id: event.target.value }))}>
                 {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
               </select></label>
-              <label>Количество<input type="number" min={1} value={addDraft.quantity} onChange={(event) => setAddDraft((current) => ({ ...current, quantity: Number(event.target.value) }))} /></label>
+              <label>Количество{addUnit ? `, ${YIELD_UNIT_LABELS[addUnit]}` : ""}<input type="number" min={0} step={yieldStep(addUnit)} value={addDraft.quantity} onChange={(event) => setAddDraft((current) => ({ ...current, quantity: Number(event.target.value) }))} /></label>
               <label>Время<input type="time" value={addDraft.due_time} onChange={(event) => setAddDraft((current) => ({ ...current, due_time: event.target.value }))} /></label>
-              <button className="primary" type="button" onClick={() => void addProduct()} disabled={saving || !addDraft.product_id || addDraft.quantity < 1}><Plus size={17} /> Добавить поверх заявки</button>
+              <button className="primary" type="button" onClick={() => void addProduct()} disabled={saving || !addDraft.product_id || !isValidYieldQuantity(addDraft.quantity, addUnit)}><Plus size={17} /> Добавить поверх заявки</button>
             </div>
           </section>
 
@@ -190,7 +192,7 @@ export function EmergencySchedule() {
                 {schedule.items.filter((item) => item.action === "add").map((item) => (
                   <article key={item.id} className="emergency-item-row">
                     <div><strong>{item.product_name_raw}</strong><small>{item.due_time.slice(0, 5)} · всегда перед основной очередью</small></div>
-                    <input aria-label={`Количество ${item.product_name_raw}`} type="number" min={1} value={draftQuantities[item.id] ?? item.quantity} onChange={(event) => setDraftQuantities((current) => ({ ...current, [item.id]: Number(event.target.value) }))} />
+                    <input aria-label={`Количество ${item.product_name_raw}`} type="number" min={0} step={yieldStep(item.unit)} value={draftQuantities[item.id] ?? item.quantity} onChange={(event) => setDraftQuantities((current) => ({ ...current, [item.id]: Number(event.target.value) }))} />
                     <button type="button" onClick={() => void updateItem(item.id)} disabled={saving || item.status !== "pending"}><Save size={16} /> Сохранить</button>
                     <button className="danger" type="button" onClick={() => void restoreItem(item.id)} disabled={saving || item.status !== "pending"}><Trash2 size={16} /> Убрать</button>
                   </article>
@@ -209,17 +211,17 @@ export function EmergencySchedule() {
                   <article key={line.id} className={`emergency-source-row${overlay?.action === "remove" ? " removed" : ""}`}>
                     <div className="emergency-source-title">
                       <strong>{line.product_name_raw}</strong>
-                      <small>{line.due_time.slice(0, 5)} · в основной заявке: {line.quantity} шт.</small>
+                      <small>{line.due_time.slice(0, 5)} · в основной заявке: {formatYield(line.quantity, line.unit ?? "pcs")}</small>
                       {locked && <span className="status-badge">Уже начата — изменение заблокировано</span>}
-                      {overlay?.action === "replace" && <span className="emergency-chip">Экстренно: {overlay.quantity} шт.</span>}
+                      {overlay?.action === "replace" && <span className="emergency-chip">Экстренно: {formatYield(overlay.quantity, overlay.unit ?? "pcs")}</span>}
                       {overlay?.action === "remove" && <span className="emergency-chip">Исключена</span>}
                     </div>
                     {overlay?.action === "remove" ? (
                       <button type="button" onClick={() => void restoreItem(overlay.id)} disabled={saving || overlay.status !== "pending"}><RotateCcw size={16} /> Вернуть</button>
                     ) : (
                       <>
-                        <label>Новое количество<input type="number" min={1} value={draftQuantities[line.id] ?? line.quantity} onChange={(event) => setDraftQuantities((current) => ({ ...current, [line.id]: Number(event.target.value) }))} disabled={locked} /></label>
-                        <button type="button" onClick={() => void replaceSource(line.id)} disabled={saving || locked || (draftQuantities[line.id] ?? line.quantity) < 1}><Save size={16} /> Применить</button>
+                        <label>Новое количество<input type="number" min={0} step={yieldStep(line.unit)} value={draftQuantities[line.id] ?? line.quantity} onChange={(event) => setDraftQuantities((current) => ({ ...current, [line.id]: Number(event.target.value) }))} disabled={locked} /></label>
+                        <button type="button" onClick={() => void replaceSource(line.id)} disabled={saving || locked || !isValidYieldQuantity(draftQuantities[line.id] ?? line.quantity, line.unit)}><Save size={16} /> Применить</button>
                         <button className="danger" type="button" onClick={() => void removeSource(line.id)} disabled={saving || locked}><Trash2 size={16} /> Исключить</button>
                         {overlay && <button type="button" onClick={() => void restoreItem(overlay.id)} disabled={saving || overlay.status !== "pending"}><RotateCcw size={16} /> Сбросить</button>}
                       </>

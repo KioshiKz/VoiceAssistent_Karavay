@@ -13,6 +13,7 @@ from app.models.user import User
 from app.schemas.product import ProductCreate, ProductDetailOut, ProductOut, ProductUpdate
 from app.schemas.recipe_step import RecipeStepCreate, RecipeStepOut, RecipeStepReorder, RecipeStepUpdate
 from app.services import folder_service, order_access_service, permission_service, recipe_service
+from app.services.quantity_service import normalize_quantity
 
 router = APIRouter(tags=["products"])
 
@@ -45,7 +46,9 @@ async def create_product(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("folder.edit", folder_param="folder_id")),
 ):
-    product = Product(folder_id=folder_id, **payload.model_dump())
+    values = payload.model_dump()
+    values["base_quantity"] = normalize_quantity(values["base_quantity"], values["yield_unit"])
+    product = Product(folder_id=folder_id, **values)
     db.add(product)
     await db.commit()
     await db.refresh(product)
@@ -109,6 +112,7 @@ async def get_product(
         folder_id=product.folder_id,
         name=product.name,
         base_quantity=product.base_quantity,
+        yield_unit=product.yield_unit,
         is_active=product.is_active,
         steps=[RecipeStepOut(**recipe_service.step_to_dict(s)) for s in steps],
     )
@@ -123,11 +127,24 @@ async def update_product(
 ):
     product = await recipe_service.get_product_or_404(db, product_id)
     await _require_product_edit(db, user, product)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if "base_quantity" in changes or "yield_unit" in changes:
+        unit = changes.get("yield_unit") or product.yield_unit
+        changes["base_quantity"] = normalize_quantity(changes.get("base_quantity", product.base_quantity), unit)
+        if unit != product.yield_unit and await _has_order_lines(db, product.id):
+            # Existing orders were placed in the old unit; switching would silently rescale them.
+            raise HTTPException(409, detail="Единицу выхода нельзя менять: по продукту уже есть заявки.")
+    for key, value in changes.items():
         setattr(product, key, value)
     await db.commit()
     await db.refresh(product)
     return product
+
+
+async def _has_order_lines(db: AsyncSession, product_id: uuid.UUID) -> bool:
+    from app.models.order import OrderLine
+
+    return (await db.execute(select(OrderLine.id).where(OrderLine.matched_product_id == product_id).limit(1))).first() is not None
 
 
 @router.delete("/api/products/{product_id}", status_code=204)

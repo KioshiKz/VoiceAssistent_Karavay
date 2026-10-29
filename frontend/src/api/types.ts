@@ -88,10 +88,14 @@ export interface IngredientBrief {
   is_active: boolean;
 }
 
+// Recipe output and order quantities: whole pieces or (possibly fractional) kilograms.
+export type YieldUnit = "pcs" | "kg";
+
 export interface ProductBrief {
   id: string;
   name: string;
   base_quantity: number;
+  yield_unit: YieldUnit;
   is_active: boolean;
 }
 
@@ -191,6 +195,7 @@ export interface ProductOut {
   folder_id: string;
   name: string;
   base_quantity: number;
+  yield_unit: YieldUnit;
   is_active: boolean;
 }
 
@@ -203,6 +208,8 @@ export interface OrderLineOut {
   order_id: string;
   product_name_raw: string;
   quantity: number;
+  /** Matched product's unit; null while the line is unmatched. */
+  unit: YieldUnit | null;
   due_time: string;
   match_status: "matched" | "unmatched";
   matched_product_id: string | null;
@@ -299,6 +306,7 @@ export interface EmergencySourceLineOut {
   id: string;
   product_name_raw: string;
   quantity: number;
+  unit: YieldUnit | null;
   due_time: string;
   matched_product_id: string | null;
   match_status: string;
@@ -313,6 +321,7 @@ export interface EmergencyItemOut {
   source_line_id: string | null;
   product_name_raw: string;
   quantity: number;
+  unit: YieldUnit | null;
   due_time: string;
   matched_product_id: string | null;
   match_status: string;
@@ -345,6 +354,7 @@ export interface StatisticsSummary {
 
 export interface ProductStatistics {
   product_name: string;
+  unit: YieldUnit | null;
   positions: number;
   total_quantity: number;
   completed: number;

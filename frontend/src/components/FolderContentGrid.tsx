@@ -1,6 +1,7 @@
 import { BellRing, Folder, Package, Pencil, Trash2, Wheat } from "lucide-react";
 import type { EventBrief, FolderOut, IngredientBrief, ProductBrief } from "../api/types";
 import { contentItemKey, type ContentSelectionItem } from "../utils/contentSelection";
+import { formatYield } from "../utils/units";
 
 interface FolderContentGridProps {
   subfolders: FolderOut[];
@@ -115,7 +116,7 @@ export function FolderContentGrid({
       {products.map((product) =>
         renderSelectableCard(
           { kind: "product", id: product.id, name: product.name, isActive: product.is_active },
-          `База: ${product.base_quantity} шт.`,
+          `Выход: ${formatYield(product.base_quantity, product.yield_unit)}`,
           "product",
         ),
       )}

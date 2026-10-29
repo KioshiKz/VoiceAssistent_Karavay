@@ -11,6 +11,8 @@ import type {
 } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { HISTORY_LABELS } from "../utils/orderHistory";
+import { apiErrorMessage } from "../utils/apiError";
+import { formatYield, isValidYieldQuantity, YIELD_UNIT_LABELS, yieldStep } from "../utils/units";
 import { ConsoleShell } from "./ConsoleShell";
 import { CurrentOrderSelection } from "./CurrentOrderSelection";
 
@@ -212,8 +214,8 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
       });
       setEditLine(null);
       await reload();
-    } catch {
-      setActionError("Не удалось сохранить изменения.");
+    } catch (error) {
+      setActionError(apiErrorMessage(error, "Не удалось сохранить изменения."));
     }
   }
 
@@ -242,6 +244,8 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
     }
   }
 
+  const createUnit = availableProducts.find((item) => item.id === createDraft.product_id)?.yield_unit;
+
   function openCreate() {
     setCreateDraft({ product_id: availableProducts[0]?.id ?? "", quantity: 1, due_time: "00:00" });
     setCreating(true);
@@ -262,8 +266,8 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
       });
       setCreating(false);
       await reload();
-    } catch {
-      setActionError("Не удалось добавить продукцию.");
+    } catch (error) {
+      setActionError(apiErrorMessage(error, "Не удалось добавить продукцию."));
     }
   }
 
@@ -456,7 +460,7 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
                             <small className="table-note">не сопоставлена</small>
                           )}
                         </td>
-                        <td>{line.quantity}</td>
+                        <td>{formatYield(line.quantity, line.unit)}</td>
                         <td>{line.due_time.slice(0, 5)}</td>
                         <td>
                           <span className={`badge status-${line.status}`}>{statusLabel(line.status)}</span>
@@ -563,10 +567,11 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
                 </select>
               </label>
               <label className="modal-field">
-                Количество
+                Количество{createUnit ? `, ${YIELD_UNIT_LABELS[createUnit]}` : ""}
                 <input
                   type="number"
-                  min={1}
+                  min={0}
+                  step={yieldStep(createUnit)}
                   value={createDraft.quantity}
                   onChange={(event) => setCreateDraft((prev) => ({ ...prev, quantity: Number(event.target.value) }))}
                 />
@@ -588,7 +593,7 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
                 className="primary"
                 type="button"
                 onClick={() => void saveCreate()}
-                disabled={!createDraft.product_id || createDraft.quantity < 1}
+                disabled={!createDraft.product_id || !isValidYieldQuantity(createDraft.quantity, createUnit)}
               >
                 Добавить
               </button>
@@ -618,10 +623,11 @@ export function OrderEditor({ fetchOrder, editTabKey, title, subtitle, allowCurr
                 />
               </label>
               <label className="modal-field">
-                Количество
+                Количество{editLine.unit ? `, ${YIELD_UNIT_LABELS[editLine.unit]}` : ""}
                 <input
                   type="number"
-                  min={1}
+                  min={0}
+                  step={yieldStep(editLine.unit)}
                   value={editDraft.quantity}
                   onChange={(event) => setEditDraft((prev) => ({ ...prev, quantity: Number(event.target.value) }))}
                 />

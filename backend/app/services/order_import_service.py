@@ -10,7 +10,7 @@ from fastapi import HTTPException
 class ParsedLine:
     row_group_index: int
     product_name_raw: str
-    quantity: int
+    quantity: float
     due_time: datetime.time
 
 
@@ -43,10 +43,11 @@ def parse_order_file(file_bytes: bytes) -> list[ParsedLine]:
     for i in range(0, len(values), 3):
         name_raw, qty_raw, time_raw = values[i], values[i + 1], values[i + 2]
         try:
-            quantity = int(qty_raw)
+            # Kilogram products may be fractional ("2,5"); the router checks whole pieces per product.
+            quantity = float(str(qty_raw).strip().replace(",", "."))
         except (TypeError, ValueError):
             raise HTTPException(400, detail=f"invalid_quantity_at_row_group_{i // 3}: {qty_raw!r}")
-        if quantity <= 0:
+        if not quantity > 0:
             raise HTTPException(400, detail=f"quantity_must_be_positive_at_row_group_{i // 3}")
 
         lines.append(

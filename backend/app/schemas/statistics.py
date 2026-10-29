@@ -17,8 +17,9 @@ class StatisticsSummary(BaseModel):
 
 class ProductStatistics(BaseModel):
     product_name: str
+    unit: str | None = None
     positions: int
-    total_quantity: int
+    total_quantity: float
     completed: int
     cancelled: int
     emergency_positions: int

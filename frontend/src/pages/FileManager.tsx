@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useNavigate, useParams } from "react-router-dom";
 import { BellRing, CheckCircle2, FolderPlus, PackagePlus, Pencil, Plus, Trash2, Wheat, XCircle } from "lucide-react";
 import { eventsApi, foldersApi, ingredientsApi, productsApi } from "../api/endpoints";
-import type { EventType, FolderContentOut, FolderOut, MeasureType } from "../api/types";
+import type { EventType, FolderContentOut, FolderOut, MeasureType, YieldUnit } from "../api/types";
 import { FolderTree } from "../components/FolderTree";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import { FolderContentGrid } from "../components/FolderContentGrid";
@@ -14,6 +14,7 @@ import { contentItemKey, type ContentSelectionItem } from "../utils/contentSelec
 import { WeightCheckFields } from "../components/WeightCheckFields";
 import { serializeWeightSettings, weightCheckDefaults, weightCheckError } from "../utils/weightCheck";
 import { apiErrorMessage } from "../utils/apiError";
+import { parseDecimalInput } from "../utils/units";
 
 type CreateKind = "folder" | "ingredient" | "product" | "event";
 
@@ -22,7 +23,8 @@ interface CreateFormState {
   description: string;
   measureType: MeasureType;
   containerWeights: string;
-  baseQuantity: number;
+  baseQuantity: string;
+  yieldUnit: YieldUnit;
   eventType: EventType;
   eventParams: Record<string, unknown>;
   isActive: boolean;
@@ -55,7 +57,8 @@ function initialCreateForm(): CreateFormState {
     description: "",
     measureType: "weight",
     containerWeights: "",
-    baseQuantity: 100,
+    baseQuantity: "100",
+    yieldUnit: "pcs",
     eventType: "timer",
     eventParams: weightCheckDefaults(),
     isActive: true,
@@ -275,7 +278,8 @@ export function FileManager() {
       if (createKind === "product" && folderId) {
         const product = await productsApi.create(folderId, {
           name: createForm.name.trim(),
-          base_quantity: createForm.baseQuantity,
+          base_quantity: parseDecimalInput(createForm.baseQuantity),
+          yield_unit: createForm.yieldUnit,
         });
         navigate(`/products/${product.id}`);
       }
@@ -548,15 +552,26 @@ export function FileManager() {
               )}
 
               {createKind === "product" && (
-                <label className="modal-field">
-                  Базовое количество, шт.
-                  <input
-                    type="number"
-                    min={1}
-                    value={createForm.baseQuantity}
-                    onChange={(event) => setCreateForm((prev) => ({ ...prev, baseQuantity: Number(event.target.value) }))}
-                  />
-                </label>
+                <div className="modal-grid">
+                  <label className="modal-field">
+                    Выход рецептуры
+                    <input
+                      inputMode="decimal"
+                      value={createForm.baseQuantity}
+                      onChange={(event) => setCreateForm((prev) => ({ ...prev, baseQuantity: event.target.value }))}
+                    />
+                  </label>
+                  <label className="modal-field">
+                    Единица
+                    <select
+                      value={createForm.yieldUnit}
+                      onChange={(event) => setCreateForm((prev) => ({ ...prev, yieldUnit: event.target.value as YieldUnit }))}
+                    >
+                      <option value="pcs">штуки</option>
+                      <option value="kg">килограммы</option>
+                    </select>
+                  </label>
+                </div>
               )}
 
               {createKind === "event" && (

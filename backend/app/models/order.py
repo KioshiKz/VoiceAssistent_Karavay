@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Time,
     UniqueConstraint,
@@ -101,7 +102,8 @@ class OrderLine(Base):
     )
     row_group_index: Mapped[int] = mapped_column(Integer, nullable=False)
     product_name_raw: Mapped[str] = mapped_column(String(255), nullable=False)
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    # In the matched product's yield unit (pieces or kilograms).
+    quantity: Mapped[float] = mapped_column(Numeric(12, 3, asdecimal=False), nullable=False)
     due_time: Mapped[time] = mapped_column(Time, nullable=False)
     matched_product_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("products.id")
