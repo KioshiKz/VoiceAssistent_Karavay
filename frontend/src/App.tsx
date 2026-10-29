@@ -17,11 +17,13 @@ import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { EmergencySchedule } from "./pages/EmergencySchedule";
 import { Statistics } from "./pages/Statistics";
 import { OneCIntegration } from "./pages/OneCIntegration";
+import { OneCReconciliation } from "./pages/OneCReconciliation";
 
 function App() {
   return (
     <Routes>
       <Route path="/admin/1c" element={<ProtectedRoute globalCode="admin.manage"><OneCIntegration /></ProtectedRoute>} />
+      <Route path="/admin/1c-reconciliation" element={<ProtectedRoute globalCode="admin.manage"><OneCReconciliation /></ProtectedRoute>} />
       <Route path="/login" element={<Login />} />
       <Route
         path="/"

@@ -1,3 +1,4 @@
+from datetime import date
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,8 +12,9 @@ from app.db.session import get_db
 from app.models.folder import Folder
 from app.models.onec import OneCRecord
 from app.models.user import User
-from app.services import onec_import_service
+from app.services import onec_import_service, onec_reconcile_service
 from app.services.onec_import_service import OneCImportError
+from app.services.onec_reconcile_service import OneCReconcileError
 from app.services.onec_service import ENTITIES, ODataReader, OneCError, OneCBusy, reference_status, sync_references
 
 router = APIRouter(prefix="/api/integrations/1c", tags=["1c"], dependencies=[Depends(require_permission("admin.manage"))])
@@ -69,6 +71,18 @@ async def import_recipes(payload: ImportRequest, db: AsyncSession = Depends(get_
     except OneCBusy as exc:
         raise HTTPException(409, detail=str(exc)) from None
     except OneCImportError as exc:
+        raise HTTPException(422, detail=str(exc)) from None
+    except OneCError as exc:
+        raise HTTPException(503, detail=str(exc)) from None
+
+
+@router.get("/reconciliation")
+async def reconciliation(date_from: date, date_to: date, db: AsyncSession = Depends(get_db)):
+    try:
+        return await onec_reconcile_service.run_reconciliation(db, ODataReader(), date_from, date_to)
+    except OneCBusy as exc:
+        raise HTTPException(409, detail=str(exc)) from None
+    except OneCReconcileError as exc:
         raise HTTPException(422, detail=str(exc)) from None
     except OneCError as exc:
         raise HTTPException(503, detail=str(exc)) from None

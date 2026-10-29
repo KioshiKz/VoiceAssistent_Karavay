@@ -1,4 +1,5 @@
-"""GET-only OData reader. No writes to 1C and no server-side boolean filters."""
+"""GET-only OData reader. No writes to 1C and no server-side boolean filters
+(they proved unreliable); documents are filtered on the server only by date."""
 import asyncio
 import base64
 from datetime import datetime, timezone
@@ -23,8 +24,16 @@ ENTITIES = {
     "specs": ("Catalog_СпецификацииНоменклатуры", "Ref_Key,Description,Code,DeletionMark,IsFolder,Owner_Key,Количество,ИсходныеКомплектующие"),
     # Register rows have no Ref_Key; the snapshot keeps the current row per item.
     "main_specs": ("InformationRegister_ОсновныеСпецификацииНоменклатуры", "Period,Номенклатура_Key,СпецификацияНоменклатуры_Key"),
+    "warehouses": ("Catalog_Склады", "Ref_Key,Description,Code,DeletionMark"),
 }
 ORDER_BY = {"main_specs": "Period,Номенклатура_Key"}
+# Documents are read on demand for a period, not stored in the snapshot.
+DOCUMENTS = {
+    "reports": ("Document_ОтчетПроизводстваЗаСмену",
+                "Ref_Key,Number,Date,Posted,DeletionMark,СкладСырья_Key,НеОтражатьВОтчетахПоСырью,Продукция", "Продукция"),
+    "requisitions": ("Document_ТребованиеНакладная",
+                     "Ref_Key,Number,Date,Posted,DeletionMark,Склад_Key,ДокументОснование,ДокументОснование_Type,Материалы", "Материалы"),
+}
 
 
 def is_number(value):
@@ -52,6 +61,27 @@ def validate_row(kind, row):
             int(line["LineNumber"])
             if not is_number(line["Количество"]):
                 raise ValueError()
+    return ref
+
+
+def validate_document(kind, row):
+    ref = uuid.UUID(row["Ref_Key"])
+    if not isinstance(row["Date"], str) or not isinstance(row["Number"], str):
+        raise ValueError()
+    if type(row["Posted"]) is not bool or type(row["DeletionMark"]) is not bool:
+        raise ValueError()
+    if kind == "reports" and type(row["НеОтражатьВОтчетахПоСырью"]) is not bool:
+        raise ValueError()
+    uuid.UUID(row["СкладСырья_Key"] if kind == "reports" else row["Склад_Key"])
+    lines = row[DOCUMENTS[kind][2]]
+    if not isinstance(lines, list):
+        raise ValueError()
+    for line in lines:
+        uuid.UUID(line["Номенклатура_Key"])
+        if not is_number(line["Количество"]) or not is_number(line["Коэффициент"]):
+            raise ValueError()
+        if kind == "reports":
+            uuid.UUID(line["Спецификация_Key"])
     return ref
 
 
@@ -130,10 +160,21 @@ class ODataReader:
 
     def read_entity(self, kind):
         entity, fields = ENTITIES[kind]
+        params = {"$select": fields, "$orderby": ORDER_BY.get(kind, "Ref_Key")}
+        return self.read_all(entity, params, lambda row: validate_row(kind, row))
+
+    def read_documents(self, kind, date_from, date_to):
+        """Documents dated in [date_from, date_to), both naive local datetimes."""
+        entity, fields, _ = DOCUMENTS[kind]
+        params = {"$select": fields, "$orderby": "Ref_Key",
+                  "$filter": f"Date ge datetime'{date_from:%Y-%m-%dT%H:%M:%S}' and Date lt datetime'{date_to:%Y-%m-%dT%H:%M:%S}'"}
+        return self.read_all(entity, params, lambda row: validate_document(kind, row))
+
+    def read_all(self, entity, params, validate):
         rows, seen = [], set()
         expected = None
         for offset in range(0, 100000, 200):
-            data = self.request(entity, {"$format": "json", "$select": fields, "$orderby": ORDER_BY.get(kind, "Ref_Key"), "$top": 200, "$skip": offset, "$inlinecount": "allpages"})
+            data = self.request(entity, {"$format": "json", **params, "$top": 200, "$skip": offset, "$inlinecount": "allpages"})
             if not isinstance(data, dict) or not isinstance(data.get("value"), list):
                 raise OneCError("Некорректная страница OData.")
             try:
@@ -143,11 +184,11 @@ class ODataReader:
             if expected is None:
                 expected = count
             if count != expected or count < 0:
-                raise OneCError("Справочник изменился во время чтения; повторите синхронизацию.")
+                raise OneCError("Данные 1С изменились во время чтения; повторите запрос.")
             batch = data["value"]
             for row in batch:
                 try:
-                    ref = validate_row(kind, row)
+                    ref = validate(row)
                     if ref in seen:
                         raise ValueError()
                 except (ValueError, TypeError, KeyError, AttributeError):
@@ -158,7 +199,7 @@ class ODataReader:
                 return rows
             if len(rows) > expected or len(batch) != 200:
                 raise OneCError("Неполная выгрузка 1С; предыдущие данные сохранены.")
-        raise OneCError("Превышен предел 100000 записей на справочник.")
+        raise OneCError("Превышен предел 100000 записей за один запрос.")
 
 
 def summarize(records):

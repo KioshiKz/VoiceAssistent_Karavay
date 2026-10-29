@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   ChartNoAxesCombined,
   Users,
+  Scale,
 } from "lucide-react";
 import { foldersApi } from "../api/endpoints";
 import type { FolderOut } from "../api/types";
@@ -57,6 +58,12 @@ const NAV_ITEMS = [
     to: "/admin/1c",
     label: "Данные 1С",
     icon: Archive,
+    canShow: (_hasTabView: (key: string) => boolean, hasGlobal: (code: string) => boolean) => hasGlobal("admin.manage"),
+  },
+  {
+    to: "/admin/1c-reconciliation",
+    label: "Сверка сырья",
+    icon: Scale,
     canShow: (_hasTabView: (key: string) => boolean, hasGlobal: (code: string) => boolean) => hasGlobal("admin.manage"),
   },
   {
